@@ -9,7 +9,7 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
 
 <p>
-  <a href="https://github.com/kites262/mineclaw/releases/tag/0.1.0"><img alt="Mineclaw 0.1.0" src="https://img.shields.io/badge/Mineclaw-0.1.0-4c8bf5"></a>
+  <a href="https://github.com/kites262/mineclaw/releases/tag/0.1.1"><img alt="Mineclaw 0.1.1" src="https://img.shields.io/badge/Mineclaw-0.1.1-4c8bf5"></a>
   <img alt="Minecraft 26.2" src="https://img.shields.io/badge/Minecraft-26.2-62b47a?logo=minecraft">
   <img alt="Paper and Folia native" src="https://img.shields.io/badge/Paper%20%2F%20Folia-native-efc75e">
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-e76f00?logo=openjdk">
@@ -104,7 +104,7 @@ Treat `26.2 + Java 25` as the current target, not a minimum-version declaration.
 **安装**
 
 1. Prepare a Paper/Folia 26.2 server running Java 25.<br>准备运行 Java 25 的 Paper/Folia 26.2 服务端。
-2. Download `Mineclaw-0.1.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest), or build it from source.<br>从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-0.1.0.jar`，或从源码构建。
+2. Download `Mineclaw-0.1.1.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest), or build it from source.<br>从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-0.1.1.jar`，或从源码构建。
 3. Stop the server and place the JAR in `plugins/`.<br>停止服务端，把 JAR 放入 `plugins/`。
 4. Start once so Mineclaw can create its default workspace.<br>启动一次，让 Mineclaw 创建默认工作区。
 5. Put the API key in `plugins/Mineclaw/.env`, then adjust `config.yml` as needed.<br>把 API 密钥写入 `plugins/Mineclaw/.env`，再按需调整 `config.yml`。
@@ -116,7 +116,7 @@ Build from source:<br>
 ```bash
 git clone https://github.com/kites262/mineclaw.git
 cd mineclaw
-git checkout 0.1.0
+git checkout 0.1.1
 ./gradlew --no-daemon clean test assemblePlugin
 ```
 
@@ -124,7 +124,7 @@ Deployable artifact:<br>
 可部署产物：
 
 ```text
-build/plugins/Mineclaw-0.1.0.jar
+build/plugins/Mineclaw-0.1.1.jar
 ```
 
 First-start data directory:<br>
