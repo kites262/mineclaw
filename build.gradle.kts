@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "cc.kites"
-version = "0.1.1"
+version = "0.1.2"
 description = "Folia-native in-game AI harness for Minecraft"
 
 repositories {

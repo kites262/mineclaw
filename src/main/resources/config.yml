@@ -5,7 +5,7 @@ api:
   api_key: 'MINECLAW_API_KEY'
   model: 'gpt-5-mini'
   timeout: 60000
-  max_retries: 2
+  max_retries: 5
   retry_backoff_ms: 500
 context:
   max_messages: 24

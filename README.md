@@ -9,7 +9,7 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
 
 <p>
-  <a href="https://github.com/kites262/mineclaw/releases/tag/0.1.1"><img alt="Mineclaw 0.1.1" src="https://img.shields.io/badge/Mineclaw-0.1.1-4c8bf5"></a>
+  <a href="https://github.com/kites262/mineclaw/releases/tag/0.1.2"><img alt="Mineclaw 0.1.2" src="https://img.shields.io/badge/Mineclaw-0.1.2-4c8bf5"></a>
   <img alt="Minecraft 26.2" src="https://img.shields.io/badge/Minecraft-26.2-62b47a?logo=minecraft">
   <img alt="Paper and Folia native" src="https://img.shields.io/badge/Paper%20%2F%20Folia-native-efc75e">
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-e76f00?logo=openjdk">
@@ -113,7 +113,7 @@ Treat `26.2 + Java 25` as the current target, not a minimum-version declaration.
 **安装**
 
 1. Prepare a Paper/Folia 26.2 server running Java 25.<br>准备运行 Java 25 的 Paper/Folia 26.2 服务端。
-2. Download `Mineclaw-0.1.1.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest), or build it from source.<br>从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-0.1.1.jar`，或从源码构建。
+2. Download `Mineclaw-0.1.2.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest), or build it from source.<br>从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-0.1.2.jar`，或从源码构建。
 3. Stop the server and place the JAR in `plugins/`.<br>停止服务端，把 JAR 放入 `plugins/`。
 4. Start once so Mineclaw can create its default workspace.<br>启动一次，让 Mineclaw 创建默认工作区。
 5. Put the API key in `plugins/Mineclaw/.env`, then adjust `config.yml` as needed.<br>把 API 密钥写入 `plugins/Mineclaw/.env`，再按需调整 `config.yml`。
@@ -125,7 +125,7 @@ Build from source:<br>
 ```bash
 git clone https://github.com/kites262/mineclaw.git
 cd mineclaw
-git checkout 0.1.1
+git checkout 0.1.2
 ./gradlew --no-daemon clean test assemblePlugin
 ```
 
@@ -133,7 +133,7 @@ Deployable artifact:<br>
 可部署产物：
 
 ```text
-build/plugins/Mineclaw-0.1.1.jar
+build/plugins/Mineclaw-0.1.2.jar
 ```
 
 First-start data directory:<br>
@@ -191,6 +191,8 @@ MINECLAW_API_KEY=replace-with-your-secret
   <br>`.env` 必须是非符号链接的普通 UTF-8 文件，最大 64 KiB。
 - The URL must be an absolute HTTP(S) URI; the model cannot be blank or contain whitespace/control characters. An empty key is rejected before any request.
   <br>URL 必须是绝对 HTTP(S) 地址；模型不能为空，也不能含空白或控制字符。空密钥会在请求发出前被本地拒绝。
+- Retryable API failures are retried up to five times by default after the initial request, with exponential backoff starting at 500 ms. Set `api.max_retries` to override this.
+  <br>可重试的 API 故障默认会在首次请求后最多重试五次，指数退避从 500 毫秒开始；可通过 `api.max_retries` 覆盖。
 `config.yml` and `.env` are published as one immutable snapshot at startup or reload. A turn already in progress keeps its original snapshot.<br>
 `config.yml` 与 `.env` 会在启动或重载时组成同一个不可变快照；已经开始的 turn 继续使用原快照。
 
@@ -310,8 +312,10 @@ The public chat prefix defaults to `@ai` and can be changed with `chat.public_pr
   <br>重启、停用插件或执行 `clear` 会清空 Session。
 - `context.max_messages` retains recent complete turns; reaching `context.max_tokens` clears the server session.
   <br>`context.max_messages` 保留最近的完整轮次；达到 `context.max_tokens` 时清空服务器 Session。
-- In the Action Bar, one newline becomes a space or soft break. A blank line—two or more consecutive newlines—clears the current buffer and starts the next paragraph. CRLF and stream-chunk boundaries are normalized.
-  <br>在 Action Bar 中，单个换行作为空格或软换行；空行（两个及以上连续换行）会清空当前缓冲并开始下一段，同时正确处理 CRLF 与跨流式分片边界。
+- The Action Bar starts with the configurable `actionbar_thinking` message (`Thinking...` by default). Between tool rounds, retries, and paragraphs, the current frame remains visible until the next renderable character atomically replaces it; low-frequency refreshes prevent it from fading during a long wait.
+  <br>Action Bar 会先显示可配置的 `actionbar_thinking` 文案（默认 `Thinking...`）。在 Tool 轮次、重试与段落之间，当前画面会保留到下一个可显示字符原位替换，并通过低频刷新避免长时间等待时提前淡出。
+- One newline becomes a space or soft break. A blank line—two or more consecutive newlines—starts a fresh internal paragraph without first sending an empty frame. CRLF and stream-chunk boundaries are normalized.
+  <br>单个换行作为空格或软换行；空行（两个及以上连续换行）会开始新的内部段落，但不会预先发送空帧，同时正确处理 CRLF 与跨流式分片边界。
 - Safe Markdown rendering currently focuses on real `**bold**` formatting.
   <br>当前安全 Markdown 渲染重点支持真正的 `**粗体**`。
 

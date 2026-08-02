@@ -22,13 +22,12 @@ class ThrottledActionBarTest {
         harness.bar.append("first\n\nsecond\n\n**third");
         harness.bar.append(" line**");
 
-        assertThat(harness.clears).isOne();
-        assertThat(harness.delayed).hasSize(1);
-        assertThat(harness.shown).isEmpty();
+        assertThat(harness.clears).isZero();
+        assertThat(harness.plainMessages()).containsExactly("third");
 
         harness.flushOne();
 
-        Component shown = harness.shown.getFirst();
+        Component shown = harness.shown.getLast();
         assertThat(PLAIN.serialize(shown)).isEqualTo("third line");
         assertThat(PLAIN.serialize(shown)).doesNotContain("\n", "\r", "first", "second");
         assertThat(shown.children()).singleElement().satisfies(child ->
@@ -36,7 +35,7 @@ class ThrottledActionBarTest {
     }
 
     @Test
-    void secondLfInTheNextDeltaClearsOnceAndCancelsQueuedStaleText() {
+    void secondLfDefersReplacementAndCancelsQueuedStaleText() {
         Harness harness = new Harness(120);
 
         harness.bar.append("a");
@@ -45,13 +44,12 @@ class ThrottledActionBarTest {
         assertThat(harness.clears).isZero();
         harness.bar.append("\n");
 
-        assertThat(harness.clears).isOne();
+        assertThat(harness.clears).isZero();
         assertThat(harness.shown).isEmpty();
         harness.flushOne();
         assertThat(harness.shown).isEmpty();
 
         harness.bar.append("b");
-        harness.flushOne();
         assertThat(harness.plainMessages()).containsExactly("b");
     }
 
@@ -83,9 +81,8 @@ class ThrottledActionBarTest {
         assertThat(harness.plainMessages()).containsExactly("a");
 
         harness.bar.append("\nb");
-        harness.flushOne();
 
-        assertThat(harness.clears).isOne();
+        assertThat(harness.clears).isZero();
         assertThat(harness.plainMessages()).containsExactly("a", "b");
     }
 
@@ -110,9 +107,8 @@ class ThrottledActionBarTest {
         harness.bar.append("\r");
         harness.bar.append("\n\r");
         harness.bar.append("\nb");
-        harness.flushOne();
 
-        assertThat(harness.clears).isOne();
+        assertThat(harness.clears).isZero();
         assertThat(harness.plainMessages()).containsExactly("a", "b");
     }
 
@@ -131,9 +127,11 @@ class ThrottledActionBarTest {
         for (int split = 0; split <= paragraphBreak.length(); split++) {
             Harness harness = appendAtSplit(paragraphBreak, split);
 
-            assertThat(harness.clears).as("paragraph split %s", split).isOne();
+            assertThat(harness.clears).as("paragraph split %s", split).isZero();
+            assertThat(harness.plainMessages().getLast()).as("paragraph split %s", split)
+                    .isEqualTo("new");
             assertThat(harness.plainMessages()).as("paragraph split %s", split)
-                    .containsExactly("new");
+                    .noneMatch(message -> message.contains("old"));
         }
     }
 
@@ -145,9 +143,8 @@ class ThrottledActionBarTest {
         harness.flushOne();
         harness.bar.append("\n\n\n\n");
         harness.bar.append("new");
-        harness.flushOne();
 
-        assertThat(harness.clears).isOne();
+        assertThat(harness.clears).isZero();
         assertThat(harness.plainMessages()).containsExactly("old", "new");
     }
 
@@ -158,9 +155,8 @@ class ThrottledActionBarTest {
         harness.bar.append("old");
         harness.flushOne();
         harness.bar.append("\n\r\nnew");
-        harness.flushOne();
 
-        assertThat(harness.clears).isOne();
+        assertThat(harness.clears).isZero();
         assertThat(harness.plainMessages()).containsExactly("old", "new");
     }
 
@@ -235,9 +231,8 @@ class ThrottledActionBarTest {
                 assertThat(child.decoration(TextDecoration.BOLD)).isEqualTo(TextDecoration.State.TRUE));
 
         harness.bar.append("\n\nnext");
-        harness.flushOne();
 
-        assertThat(harness.clears).isOne();
+        assertThat(harness.clears).isZero();
         assertThat(harness.plainMessages()).containsExactly("foo", "foo bar", "next");
     }
 
@@ -251,43 +246,98 @@ class ThrottledActionBarTest {
         assertThat(harness.plainMessages()).containsExactly("xxxxxxxx");
 
         harness.bar.append("\n".repeat(100_000));
-        assertThat(harness.clears).isOne();
-        assertThat(harness.delayed).isEmpty();
+        assertThat(harness.clears).isZero();
+        assertThat(harness.scheduled(75L)).isZero();
     }
 
     @Test
-    void retryResetClearsStaleStateWhileReusingThePendingThrottle() {
+    void retryReplacementKeepsStaleFrameUntilFreshTextIsRenderable() {
         Harness harness = new Harness(120);
 
-        harness.bar.append("stale\r");
-        harness.bar.reset();
-        harness.bar.append("**fresh**");
-
-        assertThat(harness.clears).isOne();
-        assertThat(harness.delayed).hasSize(1);
+        harness.bar.append("stale");
         harness.flushOne();
-        assertThat(harness.plainMessages()).containsExactly("fresh");
-        assertThat(harness.shown.getFirst().children().getFirst().decoration(TextDecoration.BOLD))
+        harness.bar.replaceOnNextContent();
+        harness.bar.append("**");
+
+        assertThat(harness.clears).isZero();
+        assertThat(harness.plainMessages()).containsExactly("stale");
+
+        harness.bar.append("fresh**");
+
+        assertThat(harness.plainMessages()).containsExactly("stale", "fresh");
+        assertThat(harness.shown.getLast().children().getFirst().decoration(TextDecoration.BOLD))
                 .isEqualTo(TextDecoration.State.TRUE);
 
-        harness.bar.append("\n");
         harness.bar.close();
         harness.bar.append("ignored");
-        assertThat(harness.clears).isEqualTo(2);
-        assertThat(harness.delayed).isEmpty();
+        assertThat(harness.clears).isOne();
+    }
+
+    @Test
+    void thinkingPlaceholderSurvivesFormattingAndIsAtomicallyReplacedByFirstVisibleText() {
+        Harness harness = new Harness(120);
+
+        harness.bar.showInitial(Component.text("Thinking..."));
+        harness.bar.append("\r\n**");
+
+        assertThat(harness.plainMessages()).containsExactly("Thinking...");
+        assertThat(harness.clears).isZero();
+
+        harness.keepAlive();
+        assertThat(harness.plainMessages()).containsExactly("Thinking...", "Thinking...");
+
+        harness.bar.append("fresh**");
+
+        assertThat(harness.plainMessages()).containsExactly("Thinking...", "Thinking...", "fresh");
+        assertThat(harness.shown.getLast().children().getFirst().decoration(TextDecoration.BOLD))
+                .isEqualTo(TextDecoration.State.TRUE);
+        assertThat(harness.clears).isZero();
+    }
+
+    @Test
+    void successfulFinishFlushesTheFinalFrameWithoutClearingAndStopsKeepAlive() {
+        Harness harness = new Harness(120);
+
+        harness.bar.showInitial(Component.text("Thinking..."));
+        harness.bar.append("answer");
+        harness.bar.append(" complete");
+        harness.bar.finish();
+
+        assertThat(harness.plainMessages()).containsExactly("Thinking...", "answer", "answer complete");
+        assertThat(harness.clears).isZero();
+
+        harness.keepAlive();
+        assertThat(harness.plainMessages()).containsExactly("Thinking...", "answer", "answer complete");
+    }
+
+    @Test
+    void cancellationClearsImmediatelyAndSuppressesQueuedUpdates() {
+        Harness harness = new Harness(120);
+
+        harness.bar.showInitial(Component.text("Thinking..."));
+        harness.bar.append("queued");
+        harness.bar.append(" update");
+        harness.bar.close();
+        harness.flushOne();
+        harness.keepAlive();
+
+        assertThat(harness.plainMessages()).containsExactly("Thinking...", "queued");
+        assertThat(harness.clears).isOne();
     }
 
     private static Harness appendAtSplit(String source, int split) {
         Harness harness = new Harness(120);
         harness.bar.append(source.substring(0, split));
         harness.bar.append(source.substring(split));
-        harness.flushOne();
+        if (harness.scheduled(75L) > 0) {
+            harness.flushOne();
+        }
         return harness;
     }
 
     private static final class Harness implements ThrottledActionBar.Output, ThrottledActionBar.Delay {
         private final List<Component> shown = new ArrayList<>();
-        private final Deque<Runnable> delayed = new ArrayDeque<>();
+        private final Deque<Scheduled> delayed = new ArrayDeque<>();
         private final ThrottledActionBar bar;
         private int clears;
 
@@ -306,16 +356,36 @@ class ThrottledActionBarTest {
         }
 
         @Override
-        public void schedule(Runnable action) {
-            delayed.addLast(action);
+        public void schedule(long delayMillis, Runnable action) {
+            delayed.addLast(new Scheduled(delayMillis, action));
         }
 
         private void flushOne() {
-            delayed.removeFirst().run();
+            runDelay(75L);
+        }
+
+        private void keepAlive() {
+            runDelay(1_000L);
+        }
+
+        private long scheduled(long delayMillis) {
+            return delayed.stream().filter(task -> task.delayMillis() == delayMillis).count();
+        }
+
+        private void runDelay(long delayMillis) {
+            Scheduled selected = delayed.stream()
+                    .filter(task -> task.delayMillis() == delayMillis)
+                    .findFirst()
+                    .orElseThrow();
+            delayed.remove(selected);
+            selected.action().run();
         }
 
         private List<String> plainMessages() {
             return shown.stream().map(PLAIN::serialize).toList();
+        }
+
+        private record Scheduled(long delayMillis, Runnable action) {
         }
     }
 }

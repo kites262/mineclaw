@@ -15,7 +15,7 @@ class PluginResourcesTest {
     void paperDescriptorMatchesRuntimeAndDeclaresEveryPermission() throws Exception {
         YamlConfiguration descriptor = yaml("/paper-plugin.yml");
         assertThat(descriptor.getString("name")).isEqualTo("Mineclaw");
-        assertThat(descriptor.getString("version")).isEqualTo("0.1.1");
+        assertThat(descriptor.getString("version")).isEqualTo("0.1.2");
         assertThat(descriptor.getString("main")).isEqualTo("cc.kites.mineclaw.MineclawPlugin");
         assertThat(descriptor.getString("api-version")).isEqualTo("26.2");
         assertThat(descriptor.getBoolean("folia-supported")).isTrue();
@@ -33,7 +33,7 @@ class PluginResourcesTest {
         YamlConfiguration messages = yaml("/message.yml");
         assertThat(messages.getKeys(false)).containsAll(Set.of(
                 "no_permission", "permission_unavailable", "player_only", "busy", "rate_limited",
-                "empty_question",
+                "empty_question", "actionbar_thinking",
                 "api_failure", "tool_loop_limit", "reply_prefix", "clear_success", "reload_success",
                 "reload_in_progress", "reload_failure", "approve_prompt", "approve_title",
                 "approve_requester", "approve_command", "approve_intent", "approve_player",
@@ -53,6 +53,7 @@ class PluginResourcesTest {
         assertThat(messages.getString("approve_gesture"))
                 .contains("主手", "不会对空气产生效果")
                 .doesNotContain("空手");
+        assertThat(messages.getString("actionbar_thinking")).contains("Thinking...");
         for (String resource : Set.of("/config.yml", "/message.yml", "/AGENTS.md", "/tools.yml",
                 "/skills/guide.md", "/skills/command-safety.md",
                 "/skills/locate-structure.md")) {

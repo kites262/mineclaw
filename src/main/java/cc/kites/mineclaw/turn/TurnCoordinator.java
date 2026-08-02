@@ -114,6 +114,7 @@ public final class TurnCoordinator {
                 message.role(), message.content(), List.of(), null)));
         turn.context.add(ApiMessage.user(question));
         active.set(turn);
+        turn.actionBar.showInitial(messages.render("actionbar_thinking"));
         CompletableFuture<Void> future = runRound(turn, 0, 0);
         // Preserve a transport installed by a very fast loadRound callback; otherwise keep the outer chain.
         turn.inFlight.compareAndSet(null, future);
@@ -187,7 +188,7 @@ public final class TurnCoordinator {
                         synchronized (streamed) {
                             streamed.setLength(0);
                             if (isCurrent(turn)) {
-                                turn.actionBar.reset();
+                                turn.actionBar.replaceOnNextContent();
                             }
                         }
                     }
@@ -220,8 +221,8 @@ public final class TurnCoordinator {
                 terminateWithMessage(turn, "tool_loop_limit");
                 return CompletableFuture.completedFuture(null);
             }
-            // Each completion round has its own streaming line/Markdown state.
-            turn.actionBar.reset();
+            // Preserve the current frame while tools and the next completion round are pending.
+            turn.actionBar.replaceOnNextContent();
             turn.context.add(new ApiMessage("assistant",
                     result.content().isBlank() ? null : result.content(), result.toolCalls(), null));
             return executeCallsSequentially(turn, catalog, result.toolCalls(), 0)
@@ -331,32 +332,37 @@ public final class TurnCoordinator {
         } else {
             session.appendCompletedTurn(turn.question, reply, turn.config.context().maxMessages());
         }
-        if (complete(turn)) {
+        if (complete(turn, false)) {
             channel.broadcast(messages.renderReply(turn.displayName, reply));
         }
     }
 
     private void terminateWithMessage(ActiveTurn turn, String messageKey) {
-        if (complete(turn)) {
+        if (complete(turn, true)) {
             channel.send(turn.player, messages.render(messageKey));
         }
     }
 
     private void fail(ActiveTurn turn, String messageKey, Throwable failure) {
-        if (complete(turn)) {
+        if (complete(turn, true)) {
             logger.warning("Mineclaw turn " + turn.id + " ended without a public reply: "
                     + failure.getClass().getSimpleName() + ": " + safe(failure.getMessage()));
             channel.send(turn.player, messages.render(messageKey));
         }
     }
 
-    private synchronized boolean complete(ActiveTurn turn) {
+    private synchronized boolean complete(ActiveTurn turn, boolean clearActionBar) {
         if (!active.compareAndSet(turn, null)) {
             return false;
         }
         turn.cancelled = true;
-        turn.actionBar.close();
-        return enabled.getAsBoolean();
+        boolean available = enabled.getAsBoolean();
+        if (clearActionBar || !available) {
+            turn.actionBar.close();
+        } else {
+            turn.actionBar.finish();
+        }
+        return available;
     }
 
     private boolean isCurrent(ActiveTurn turn) {

@@ -51,7 +51,7 @@ public record MineclawConfig(
         return new MineclawConfig(
                 SCHEMA,
                 new Api(URI.create("https://api.openai.com/v1/chat/completions"), "MINECLAW_API_KEY",
-                        "gpt-5-mini", 60_000, 2, 500),
+                        "gpt-5-mini", 60_000, 5, 500),
                 new Context(24, 24_000),
                 new Chat("@ai", Optional.empty(), 2_000, 120),
                 new Tools(true, Set.of()),

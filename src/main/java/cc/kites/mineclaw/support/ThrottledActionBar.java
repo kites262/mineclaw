@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 /** Coalesces streaming deltas so token cadence cannot flood the entity scheduler. */
 public final class ThrottledActionBar implements AutoCloseable {
     private static final long INTERVAL_MILLIS = 75L;
+    private static final long KEEP_ALIVE_MILLIS = 1_000L;
 
     private final Output output;
     private final Delay delay;
@@ -16,9 +17,11 @@ public final class ThrottledActionBar implements AutoCloseable {
     private boolean previousWasCarriageReturn;
     private BreakState breakState = BreakState.NONE;
     private boolean paragraphHasInput;
-    private boolean clearedSinceLastShow;
+    private Component visible;
+    private boolean replaceOnNextContent;
     private boolean dirty;
     private boolean scheduled;
+    private boolean keepAliveScheduled;
     private boolean closed;
 
     public ThrottledActionBar(Player player, PlayerChannel channel, FoliaTasks tasks, int maximumCodePoints) {
@@ -32,6 +35,18 @@ public final class ThrottledActionBar implements AutoCloseable {
             throw new IllegalArgumentException("maximumCodePoints must be positive");
         }
         this.currentLine = new SafeMarkdown.StreamingTail(maximumCodePoints);
+    }
+
+    /** Shows a stable first-request placeholder that the first streamed text will replace. */
+    public synchronized void showInitial(Component message) {
+        Objects.requireNonNull(message, "message");
+        if (closed || visible != null) {
+            return;
+        }
+        visible = message;
+        replaceOnNextContent = true;
+        output.show(message);
+        scheduleKeepAlive();
     }
 
     /** Adds one streamed delta, treating one logical line break as soft and two or more as a paragraph boundary. */
@@ -63,7 +78,9 @@ public final class ThrottledActionBar implements AutoCloseable {
             paragraphHasInput = true;
             dirty |= currentLine.append(value);
         }
-        if (dirty) {
+        if (dirty && replaceOnNextContent && !currentLine.isEmpty()) {
+            flushCurrent();
+        } else if (dirty) {
             schedule();
         }
     }
@@ -72,7 +89,7 @@ public final class ThrottledActionBar implements AutoCloseable {
         if (!scheduled) {
             scheduled = true;
             try {
-                delay.schedule(this::flush);
+                delay.schedule(INTERVAL_MILLIS, this::flush);
             } catch (RuntimeException exception) {
                 scheduled = false;
             }
@@ -85,38 +102,50 @@ public final class ThrottledActionBar implements AutoCloseable {
             return;
         }
         if (dirty && !currentLine.isEmpty()) {
-            dirty = false;
-            output.show(currentLine.render());
-            clearedSinceLastShow = false;
+            flushCurrent();
         } else {
             dirty = false;
         }
     }
 
-    /** Clears a failed streaming attempt before a retry starts. */
-    public synchronized void reset() {
+    /** Starts a fresh parser segment while preserving the visible frame until replacement text exists. */
+    public synchronized void replaceOnNextContent() {
         if (!closed) {
-            currentLine.clear();
-            dirty = false;
-            previousWasCarriageReturn = false;
-            breakState = BreakState.NONE;
-            paragraphHasInput = false;
-            output.clear();
-            clearedSinceLastShow = true;
+            prepareReplacement();
+        }
+    }
+
+    /** Stops updates after a successful turn and lets the final frame fade naturally. */
+    public synchronized void finish() {
+        if (!closed) {
+            if (dirty && !currentLine.isEmpty()) {
+                Component finalFrame = currentLine.render();
+                dirty = false;
+                visible = finalFrame;
+                output.show(finalFrame);
+            }
+            retire(false);
         }
     }
 
     @Override
     public synchronized void close() {
         if (!closed) {
-            closed = true;
-            currentLine.clear();
-            dirty = false;
-            previousWasCarriageReturn = false;
-            breakState = BreakState.NONE;
-            paragraphHasInput = false;
+            retire(true);
+        }
+    }
+
+    private void retire(boolean clear) {
+        closed = true;
+        currentLine.clear();
+        visible = null;
+        replaceOnNextContent = false;
+        dirty = false;
+        previousWasCarriageReturn = false;
+        breakState = BreakState.NONE;
+        paragraphHasInput = false;
+        if (clear) {
             output.clear();
-            clearedSinceLastShow = true;
         }
     }
 
@@ -130,19 +159,50 @@ public final class ThrottledActionBar implements AutoCloseable {
     }
 
     private void paragraphBreak() {
-        boolean hadContent = !currentLine.isEmpty();
-        currentLine.clearLine();
+        prepareReplacement();
+    }
+
+    private void prepareReplacement() {
+        currentLine.clear();
         paragraphHasInput = false;
+        previousWasCarriageReturn = false;
+        breakState = BreakState.PARAGRAPH;
         dirty = false;
-        if (hadContent && !clearedSinceLastShow) {
-            output.clear();
-            clearedSinceLastShow = true;
+        replaceOnNextContent = true;
+    }
+
+    private void flushCurrent() {
+        Component message = currentLine.render();
+        dirty = false;
+        visible = message;
+        replaceOnNextContent = false;
+        output.show(message);
+        scheduleKeepAlive();
+    }
+
+    private void scheduleKeepAlive() {
+        if (!closed && visible != null && !keepAliveScheduled) {
+            keepAliveScheduled = true;
+            try {
+                delay.schedule(KEEP_ALIVE_MILLIS, this::keepAlive);
+            } catch (RuntimeException exception) {
+                keepAliveScheduled = false;
+            }
+        }
+    }
+
+    private synchronized void keepAlive() {
+        keepAliveScheduled = false;
+        if (!closed && visible != null) {
+            output.show(visible);
+            scheduleKeepAlive();
         }
     }
 
     private static Delay foliaDelay(FoliaTasks tasks) {
         Objects.requireNonNull(tasks, "tasks");
-        return action -> tasks.asyncLater(INTERVAL_MILLIS, TimeUnit.MILLISECONDS, ignored -> action.run());
+        return (delayMillis, action) -> tasks.asyncLater(
+                delayMillis, TimeUnit.MILLISECONDS, ignored -> action.run());
     }
 
     private enum BreakState {
@@ -159,7 +219,7 @@ public final class ThrottledActionBar implements AutoCloseable {
 
     @FunctionalInterface
     interface Delay {
-        void schedule(Runnable action);
+        void schedule(long delayMillis, Runnable action);
     }
 
     private record PlayerOutput(Player player, PlayerChannel channel) implements Output {

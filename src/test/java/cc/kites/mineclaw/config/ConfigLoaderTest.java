@@ -28,7 +28,7 @@ class ConfigLoaderTest {
         assertThat(config.api().apiKey()).isEqualTo("MINECLAW_API_KEY");
         assertThat(config.api().model()).isEqualTo("gpt-5-mini");
         assertThat(config.api().timeoutMillis()).isEqualTo(60_000);
-        assertThat(config.api().maxRetries()).isEqualTo(2);
+        assertThat(config.api().maxRetries()).isEqualTo(5);
         assertThat(config.api().retryBackoffMillis()).isEqualTo(500);
         assertThat(config.context()).isEqualTo(new MineclawConfig.Context(24, 24_000));
         assertThat(config.chat().publicPrefix()).isEqualTo("@ai");
