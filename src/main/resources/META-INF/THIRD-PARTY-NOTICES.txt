@@ -1,0 +1,11 @@
+Mineclaw embeds the following third-party software:
+
+- Gson 2.14.0, Copyright 2008 Google Inc.
+  https://github.com/google/gson
+- SnakeYAML 2.4, Copyright 2008-2025 Andrey Somov
+  https://bitbucket.org/snakeyaml/snakeyaml
+- Error Prone annotations 2.48.0, Copyright 2015 The Error Prone Authors
+  https://github.com/google/error-prone
+
+Each component above is licensed under the Apache License, Version 2.0.
+The complete license text is included as META-INF/LICENSE-APACHE-2.0.txt.

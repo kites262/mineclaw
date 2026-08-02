@@ -1,0 +1,53 @@
+schema: 1
+api:
+  # base_url, model and api_key may each name a process/.env variable instead of a literal value.
+  base_url: 'https://api.openai.com/v1/chat/completions'
+  api_key: 'MINECLAW_API_KEY'
+  api_key_env: ''
+  model: 'gpt-5-mini'
+  timeout: 60000
+  max_retries: 2
+  retry_backoff_ms: 500
+context:
+  max_messages: 24
+  max_tokens: 24000
+chat:
+  public_prefix: '@ai'
+  wake_pattern: ''
+  reply_max_chars: 2000
+  actionbar_max_chars: 120
+tools:
+  enabled: true
+  disabled: []
+commands:
+  run_enabled: false
+  player_whitelist:
+    # Vanilla, read-only structure lookup. Add server-specific commands only after reviewing
+    # their execution identity, side effects and permission model.
+    - '^locate structure #?(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+$'
+  console_whitelist: []
+rate_limit:
+  player_cooldown_ms: 5000
+  global_cooldown_ms: 1000
+workspace:
+  seed_defaults: true
+  max_chars:
+    agents: 16000
+file_tools:
+  max_read_chars: 12000
+  max_results: 100
+  max_depth: 4
+  timeout: 3000
+turn:
+  max_tool_rounds: 8
+  max_tool_calls: 24
+identity:
+  name: 'Mineclaw'
+environment:
+  look_distance: 12
+  tool_cooldown_ms: 250
+  inventory:
+    include_equipment: true
+    max_slots: 36
+logging:
+  level: 'INFO'

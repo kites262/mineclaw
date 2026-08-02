@@ -1,0 +1,37 @@
+.gradle/
+build/
+out/
+.idea/
+.vscode/
+*.iml
+
+# Local secrets and runtime Workspace files
+/.env
+/.env.*
+!/.env.example
+/.envrc
+/.direnv/
+/AGENTS.md
+/config.yml
+/message.yml
+/tools.yml
+/skills/
+
+# Accidental server/runtime data
+/plugins/
+/logs/
+/cache/
+/world/
+/world_nether/
+/world_the_end/
+/crash-reports/
+/server.properties
+/eula.txt
+/ops.json
+/whitelist.json
+/banned-players.json
+/banned-ips.json
+/usercache.json
+*.log
+hs_err_pid*
+.DS_Store

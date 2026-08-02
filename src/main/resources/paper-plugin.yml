@@ -1,0 +1,25 @@
+name: Mineclaw
+version: '0.1.0'
+main: cc.kites.mineclaw.MineclawPlugin
+api-version: '26.2'
+folia-supported: true
+description: In-game AI assistant for Paper and Folia
+permissions:
+  mineclaw.command.chat:
+    description: Use Mineclaw in public chat
+    default: true
+  mineclaw.command.clear:
+    description: Clear Mineclaw's public conversation history
+    default: op
+  mineclaw.command.approve:
+    description: Approve or reject Mineclaw command requests
+    default: true
+  mineclaw.command.reload:
+    description: Reload Mineclaw configuration
+    default: op
+  mineclaw.command.tools:
+    description: Inspect Mineclaw tool availability
+    default: op
+  mineclaw.bypass.ratelimit:
+    description: Bypass Mineclaw chat rate limits
+    default: false
