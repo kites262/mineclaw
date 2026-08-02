@@ -28,6 +28,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ChatCompletionsClientTest {
+    private static final ChatCompletionsClient.StreamObserver IGNORE_STREAM =
+            new ChatCompletionsClient.StreamObserver() {
+                @Override
+                public void onDelta(String delta) {
+                }
+
+                @Override
+                public void onReset() {
+                }
+            };
+
     private HttpServer server;
     private ExecutorService serverExecutor;
 
@@ -68,7 +79,7 @@ class ChatCompletionsClientTest {
                 ApiMessage.assistantToolCalls(List.of(new ToolCall("old_call", "look", "{}"))),
                 ApiMessage.tool("old_call", "{\"status\":\"ok\"}")), List.of(tool), 0);
 
-        ChatCompletionResult result = client().complete(request, "test-secret", null).join();
+        ChatCompletionResult result = client().complete(request, "test-secret", IGNORE_STREAM).join();
 
         assertThat(authorization).hasValue("Bearer test-secret");
         assertThat(result.content()).isEqualTo("完成");
@@ -105,7 +116,17 @@ class ChatCompletionsClientTest {
         StringBuilder deltas = new StringBuilder();
 
         ChatCompletionResult result = client().complete(request(List.of(ApiMessage.user("数数")), List.of(), 0),
-                "secret", deltas::append).join();
+                "secret", new ChatCompletionsClient.StreamObserver() {
+                    @Override
+                    public void onDelta(String delta) {
+                        deltas.append(delta);
+                    }
+
+                    @Override
+                    public void onReset() {
+                        deltas.setLength(0);
+                    }
+                }).join();
 
         assertThat(deltas).hasToString("一二");
         assertThat(result.content()).isEqualTo("一二");
@@ -133,7 +154,7 @@ class ChatCompletionsClientTest {
         StringBuilder visible = new StringBuilder();
         AtomicInteger resets = new AtomicInteger();
 
-        ChatCompletionResult result = client().completeObserved(
+        ChatCompletionResult result = client().complete(
                 request(List.of(ApiMessage.user("retry stream")), List.of(), 1), "secret",
                 new ChatCompletionsClient.StreamObserver() {
                     @Override
@@ -163,7 +184,7 @@ class ChatCompletionsClientTest {
             respond(exchange, 200, ordinaryResponse("no tools"));
         });
 
-        client().complete(request(List.of(), List.of(), 0), "secret", null).join();
+        client().complete(request(List.of(), List.of(), 0), "secret", IGNORE_STREAM).join();
 
         assertThat(requestBody.get().has("tools")).isFalse();
     }
@@ -183,7 +204,7 @@ class ChatCompletionsClientTest {
         });
 
         ChatCompletionResult result = client().complete(request(List.of(ApiMessage.user("retry")), List.of(), 2),
-                "secret", null).join();
+                "secret", IGNORE_STREAM).join();
 
         assertThat(result.content()).isEqualTo("第三次成功");
         assertThat(attempts).hasValue(3);
@@ -201,7 +222,8 @@ class ChatCompletionsClientTest {
             }
         });
 
-        ChatCompletionResult result = client().complete(request(List.of(), List.of(), 1), "secret", null).join();
+        ChatCompletionResult result = client().complete(
+                request(List.of(), List.of(), 1), "secret", IGNORE_STREAM).join();
 
         assertThat(result.content()).isEqualTo("恢复");
         assertThat(attempts).hasValue(2);
@@ -223,7 +245,7 @@ class ChatCompletionsClientTest {
         ChatCompletionRequest request = new ChatCompletionRequest(endpoint(), "deepseek-v4-flash", "",
                 List.of(), List.of(), Duration.ofMillis(100), 1, Duration.ofMillis(1));
 
-        ChatCompletionResult result = client().complete(request, "secret", null).join();
+        ChatCompletionResult result = client().complete(request, "secret", IGNORE_STREAM).join();
 
         assertThat(result.content()).isEqualTo("timeout recovered");
         assertThat(attempts).hasValue(2);
@@ -238,7 +260,7 @@ class ChatCompletionsClientTest {
         });
 
         assertThatThrownBy(() -> client().complete(request(List.of(), List.of(), 2),
-                        "never-print-this", null).join())
+                        "never-print-this", IGNORE_STREAM).join())
                 .isInstanceOf(CompletionException.class)
                 .hasCauseInstanceOf(ChatCompletionException.class)
                 .hasMessageNotContaining("never-print-this");

@@ -3,7 +3,6 @@ api:
   # base_url, model and api_key may each name a process/.env variable instead of a literal value.
   base_url: 'https://api.openai.com/v1/chat/completions'
   api_key: 'MINECLAW_API_KEY'
-  api_key_env: ''
   model: 'gpt-5-mini'
   timeout: 60000
   max_retries: 2

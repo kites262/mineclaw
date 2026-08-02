@@ -163,10 +163,6 @@ public final class WorkspaceService {
         return new AgentDocument(injected, displayName, seeded, truncated, snapshot.observedLength());
     }
 
-    public AgentDocument loadAgentDocument(MineclawConfig config) throws IOException {
-        return readAgentDocument(config);
-    }
-
     public Path root() {
         return root;
     }

@@ -26,7 +26,6 @@ class ConfigLoaderTest {
         assertThat(config.api().baseUrl().toString())
                 .isEqualTo("https://api.openai.com/v1/chat/completions");
         assertThat(config.api().apiKey()).isEqualTo("MINECLAW_API_KEY");
-        assertThat(config.api().apiKeyEnv()).isEmpty();
         assertThat(config.api().model()).isEqualTo("gpt-5-mini");
         assertThat(config.api().timeoutMillis()).isEqualTo(60_000);
         assertThat(config.api().maxRetries()).isEqualTo(2);
@@ -116,7 +115,6 @@ class ConfigLoaderTest {
                   base_url: https://literal.example/v1/chat/completions
                   model: literal-model
                   api_key: sk-literal
-                  api_key_env: ''
                 """, StandardCharsets.UTF_8);
         Files.writeString(directory.resolve(".env"), "UNRELATED=value\n", StandardCharsets.UTF_8);
         MineclawConfig.Api literal = new ConfigStore(path, new ConfigLoader(name -> null)).loadInitial().api();
@@ -184,27 +182,9 @@ class ConfigLoaderTest {
     }
 
     @Test
-    void legacyApiKeyEnvReadsProcessThenDotenvWithoutLiteralFallback(@TempDir Path directory)
-            throws Exception {
-        Path path = directory.resolve("config.yml");
-        Files.writeString(path, "schema: 1\napi: {api_key: '', api_key_env: API_TOKEN}\n",
-                StandardCharsets.UTF_8);
-        Files.writeString(directory.resolve(".env"), "API_TOKEN=legacy-dotenv\n", StandardCharsets.UTF_8);
-        assertThat(new ConfigStore(path, new ConfigLoader(name -> null)).loadInitial().api().configuredApiKey())
-                .contains("legacy-dotenv");
-        assertThat(new ConfigStore(path,
-                new ConfigLoader(Map.of("API_TOKEN", "legacy-system")::get)).loadInitial()
-                .api().configuredApiKey()).contains("legacy-system");
-
-        Files.writeString(directory.resolve(".env"), "UNRELATED=value\n", StandardCharsets.UTF_8);
-        assertThat(new ConfigStore(path, new ConfigLoader(name -> null)).loadInitial()
-                .api().configuredApiKey()).isEmpty();
-    }
-
-    @Test
     void dotenvSupportsCommonQuotesCommentsAndExportPrefix(@TempDir Path directory) throws Exception {
         Path path = directory.resolve("config.yml");
-        Files.writeString(path, "schema: 1\napi: {api_key: API_TOKEN, api_key_env: ''}\n",
+        Files.writeString(path, "schema: 1\napi: {api_key: API_TOKEN}\n",
                 StandardCharsets.UTF_8);
         Files.writeString(directory.resolve(".env"), """
                 # Local secrets
@@ -220,7 +200,7 @@ class ConfigLoaderTest {
     void dotenvDistinguishesAnEmptyCommentedValueFromAHashLiteral(@TempDir Path directory)
             throws Exception {
         Path path = directory.resolve("config.yml");
-        Files.writeString(path, "schema: 1\napi: {api_key: API_TOKEN, api_key_env: ''}\n",
+        Files.writeString(path, "schema: 1\napi: {api_key: API_TOKEN}\n",
                 StandardCharsets.UTF_8);
         Path dotEnv = directory.resolve(".env");
         Files.writeString(dotEnv, "API_TOKEN= # placeholder\n", StandardCharsets.UTF_8);
@@ -286,7 +266,7 @@ class ConfigLoaderTest {
     void invalidOrOversizedDotenvDoesNotReplacePublishedSnapshot(@TempDir Path directory) throws Exception {
         Path path = directory.resolve("config.yml");
         Path dotEnv = directory.resolve(".env");
-        Files.writeString(path, "schema: 1\napi: {api_key: API_TOKEN, api_key_env: ''}\n",
+        Files.writeString(path, "schema: 1\napi: {api_key: API_TOKEN}\n",
                 StandardCharsets.UTF_8);
         Files.writeString(dotEnv, "API_TOKEN=first\n", StandardCharsets.UTF_8);
         ConfigStore store = new ConfigStore(path);
@@ -383,14 +363,6 @@ class ConfigLoaderTest {
 
         assertThatThrownBy(() -> loader.parse("""
                 schema: 1
-                api:
-                  api_key_env: 'INVALID=NAME'
-                """))
-                .isInstanceOf(ConfigException.class)
-                .hasMessageContaining("api.api_key_env");
-
-        assertThatThrownBy(() -> loader.parse("""
-                schema: 1
                 workspace:
                   max_chars:
                     agents: 1000001
@@ -451,7 +423,6 @@ class ConfigLoaderTest {
                   base_url: API_BASE
                   model: API_MODEL
                   api_key: API_TOKEN
-                  api_key_env: ''
                 """;
     }
 }

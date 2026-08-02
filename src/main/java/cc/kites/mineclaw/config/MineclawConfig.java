@@ -51,7 +51,7 @@ public record MineclawConfig(
         return new MineclawConfig(
                 SCHEMA,
                 new Api(URI.create("https://api.openai.com/v1/chat/completions"), "MINECLAW_API_KEY",
-                        "", "gpt-5-mini", 60_000, 2, 500),
+                        "gpt-5-mini", 60_000, 2, 500),
                 new Context(24, 24_000),
                 new Chat("@ai", Optional.empty(), 2_000, 120),
                 new Tools(true, Set.of()),
@@ -71,7 +71,6 @@ public record MineclawConfig(
     public record Api(
             URI baseUrl,
             String apiKey,
-            String apiKeyEnv,
             String model,
             long timeoutMillis,
             int maxRetries,
@@ -80,7 +79,6 @@ public record MineclawConfig(
         public Api {
             Objects.requireNonNull(baseUrl, "baseUrl");
             apiKey = Objects.requireNonNull(apiKey, "apiKey").trim();
-            apiKeyEnv = Objects.requireNonNull(apiKeyEnv, "apiKeyEnv").trim();
             model = Objects.requireNonNull(model, "model").trim();
         }
 
@@ -94,7 +92,7 @@ public record MineclawConfig(
 
         @Override
         public String toString() {
-            return "Api[baseUrl=protected, apiKey=protected, apiKeyEnv=protected, model=protected"
+            return "Api[baseUrl=protected, apiKey=protected, model=protected"
                     + ", timeoutMillis=" + timeoutMillis + ", maxRetries=" + maxRetries
                     + ", retryBackoffMillis=" + retryBackoffMillis + ']';
         }

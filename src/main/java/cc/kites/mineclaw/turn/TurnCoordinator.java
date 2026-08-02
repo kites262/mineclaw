@@ -170,7 +170,7 @@ public final class TurnCoordinator {
             StringBuilder streamed = new StringBuilder();
             CompletableFuture<ChatCompletionResult> response;
             try {
-                response = chatClient.completeObserved(request, key.orElseThrow(),
+                response = chatClient.complete(request, key.orElseThrow(),
                         new ChatCompletionsClient.StreamObserver() {
                     @Override
                     public void onDelta(String delta) {

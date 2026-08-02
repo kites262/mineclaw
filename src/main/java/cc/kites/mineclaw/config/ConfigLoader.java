@@ -81,14 +81,8 @@ public final class ConfigLoader {
         String baseUrlText = references.resolve(
                 string(yaml, "api.base_url", apiDefaults.baseUrl().toString()), "api.base_url");
         URI baseUrl = uri(nonBlank(baseUrlText, "api.base_url"), "api.base_url");
-        String configuredApiKey = string(yaml, "api.api_key", apiDefaults.apiKey()).trim();
-        String apiKeyEnv = string(yaml, "api.api_key_env", apiDefaults.apiKeyEnv()).trim();
-        if (!apiKeyEnv.isEmpty() && !apiKeyEnv.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-            throw invalid("api.api_key_env", "must be a valid environment variable name or empty");
-        }
-        String apiKey = configuredApiKey.isEmpty()
-                ? references.resolveLegacy(apiKeyEnv, "api.api_key_env")
-                : references.resolve(configuredApiKey, "api.api_key");
+        String apiKey = references.resolve(
+                string(yaml, "api.api_key", apiDefaults.apiKey()), "api.api_key");
         String model = model(references.resolve(
                 string(yaml, "api.model", apiDefaults.model()), "api.model"));
         long timeout = boundedPositiveLong(
@@ -98,7 +92,7 @@ public final class ConfigLoader {
         long retryBackoff = boundedPositiveLong(
                 yaml, "api.retry_backoff_ms", apiDefaults.retryBackoffMillis(), 3_600_000L);
         MineclawConfig.Api api = new MineclawConfig.Api(
-                baseUrl, apiKey, apiKeyEnv, model, timeout, maxRetries, retryBackoff);
+                baseUrl, apiKey, model, timeout, maxRetries, retryBackoff);
 
         MineclawConfig.Context contextDefaults = defaults.context();
         MineclawConfig.Context context = new MineclawConfig.Context(
@@ -233,18 +227,6 @@ public final class ConfigLoader {
             }
             String fileValue = fileEnvironment.get(candidate);
             return fileValue == null ? candidate : fileValue.trim();
-        }
-
-        private String resolveLegacy(String variableName, String path) throws ConfigException {
-            if (variableName.isEmpty()) {
-                return "";
-            }
-            String processValue = process(variableName, path);
-            if (processValue != null) {
-                return processValue.trim();
-            }
-            String fileValue = fileEnvironment.get(variableName);
-            return fileValue == null ? "" : fileValue.trim();
         }
 
         private String process(String variableName, String path) throws ConfigException {

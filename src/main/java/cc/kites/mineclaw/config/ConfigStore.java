@@ -38,10 +38,6 @@ public final class ConfigStore {
         return value;
     }
 
-    public MineclawConfig current() {
-        return get();
-    }
-
     public Path path() {
         return path;
     }

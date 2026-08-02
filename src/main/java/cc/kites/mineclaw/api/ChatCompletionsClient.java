@@ -28,7 +28,6 @@ import java.util.function.Consumer;
 /** Asynchronous OpenAI-compatible Chat Completions streaming client. */
 public final class ChatCompletionsClient {
     private static final Gson GSON = new Gson();
-    private static final Consumer<String> IGNORE_DELTAS = ignored -> { };
     private static final int MAX_ERROR_BODY_BYTES = 64 * 1024;
 
     private final HttpClient httpClient;
@@ -47,25 +46,6 @@ public final class ChatCompletionsClient {
      * only placed in the HTTP Authorization header and is never included in an exception or log message.
      */
     public CompletableFuture<ChatCompletionResult> complete(
-            ChatCompletionRequest request,
-            String apiKey,
-            Consumer<String> deltaConsumer
-    ) {
-        Consumer<String> callback = deltaConsumer == null ? IGNORE_DELTAS : deltaConsumer;
-        return completeObserved(request, apiKey, new StreamObserver() {
-            @Override
-            public void onDelta(String delta) {
-                callback.accept(delta);
-            }
-
-            @Override
-            public void onReset() {
-                // The legacy callback has no reset signal. Production uses the observer overload.
-            }
-        });
-    }
-
-    public CompletableFuture<ChatCompletionResult> completeObserved(
             ChatCompletionRequest request,
             String apiKey,
             StreamObserver observer

@@ -182,9 +182,6 @@ MINECLAW_API_KEY=replace-with-your-secret
   <br>`.env` 必须是非符号链接的普通 UTF-8 文件，最大 64 KiB。
 - The URL must be an absolute HTTP(S) URI; the model cannot be blank or contain whitespace/control characters. An empty key is rejected before any request.
   <br>URL 必须是绝对 HTTP(S) 地址；模型不能为空，也不能含空白或控制字符。空密钥会在请求发出前被本地拒绝。
-- Legacy `api_key: ''` with `api_key_env` remains supported; `api_key_env` never falls back to a literal secret.
-  <br>旧式 `api_key: ''` 配合 `api_key_env` 仍受支持；`api_key_env` 不会回退为字面密钥。
-
 `config.yml` and `.env` are published as one immutable snapshot at startup or reload. A turn already in progress keeps its original snapshot.<br>
 `config.yml` 与 `.env` 会在启动或重载时组成同一个不可变快照；已经开始的 turn 继续使用原快照。
 
