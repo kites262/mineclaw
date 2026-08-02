@@ -3,7 +3,7 @@
 # ⛏️ Mineclaw
 
 **Give your Minecraft server an agent—not just a chatbot.**<br>
-**给 Minecraft 服务器一个真正会理解、会查找、会行动的 Agent。**
+**给 Minecraft 服务器一个真正会理解、会查找、会规划、会行动的 Agent。**
 
 Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
@@ -31,13 +31,13 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 
 **为什么是 Mineclaw**
 
-Mineclaw brings an agent-native experience into Minecraft. The model can understand operator-authored knowledge, inspect the current player's environment, discover skills, compose tools, and request real server actions—all from public chat.<br>
-Mineclaw 把 Agent 级体验带进 Minecraft：模型能理解服主编写的知识、感知当前玩家环境、自主发现 Skill、组合 Tool，并从公共聊天中请求真实的服务器操作。
+Mineclaw brings an agent-native experience into Minecraft. The model can combine operator-authored knowledge with live game state, plan multi-step work, discover Skills, compose tools, and request real server actions—all from public chat.<br>
+Mineclaw 把 Agent 级体验带进 Minecraft：模型能把服主编写的知识与实时游戏状态结合起来，规划多步任务，自主发现 Skill、组合 Tool，并从公共聊天中请求真实的服务器操作。
 
 - **A workspace that shapes the agent.** `AGENTS.md`, `tools.yml`, and `skills/*.md` define its identity, knowledge, procedures, and available capabilities.
   <br>**用工作区塑造 Agent。** `AGENTS.md`、`tools.yml` 与 `skills/*.md` 共同定义身份、知识、操作规程和可用能力。
-- **Context from the game, not guesses.** Read-only tools expose the block in sight, the block underfoot, a redacted inventory summary, and online account names.
-  <br>**从游戏里拿上下文，而不是靠猜。** 只读 Tool 可以观察准星方块、脚下方块、脱敏背包摘要和在线玩家账号名。
+- **Live state becomes planning input.** Read-only tools expose nearby blocks, position, inventory item types and counts, and online account names, so the agent can reason about materials, location, and participants instead of answering generic questions.
+  <br>**把实时状态变成规划依据。** 只读 Tool 可以观察附近方块、位置、背包物品类型与数量以及在线玩家账号名，让 Agent 围绕材料、地点和参与者推理，而不是只回答泛泛的问题。
 - **Skills that turn server knowledge into play.** Rules, events, custom plugin commands, and multi-step procedures become documents the model can discover and follow.
   <br>**让服务器知识变成可玩的 Skill。** 服规、活动、第三方插件命令和多步流程都能写成模型可发现、可遵循的文档。
 - **Visible, native interaction.** Streaming output appears in the Action Bar; the completed answer is broadcast once in public chat.
@@ -45,43 +45,52 @@ Mineclaw 把 Agent 级体验带进 Minecraft：模型能理解服主编写的知
 - **Built for Paper and Folia.** Entity, region, global, HTTP, and file work stay on their appropriate scheduling boundaries.
   <br>**面向 Paper 与 Folia 构建。** 实体、区域、全局、HTTP 和文件任务各自在正确的调度边界运行。
 
-## 🎮 Four ways to play with it
+## 🎮 Four jobs worth giving an agent
 
-**四个具体玩法**
+**四个值得交给 Agent 的任务**
 
-### 1. A context-aware survival companion
+### 1. Optimize a crafting plan from the real inventory
 
-**随身环境助手**
+**根据真实背包做合成优化**
 
-A player asks: `@ai What am I standing on, and do I still have wood?` Mineclaw can combine `feet_block` and `inventory` to answer from the player's actual context without changing the world or inventory.<br>
-玩家问：`@ai 我脚下是什么，背包里还有木头吗？` Mineclaw 可以组合 `feet_block` 与 `inventory`，根据玩家当下的真实环境回答，同时不修改世界和物品栏。
+A player asks: `@ai With what I have now, how should I split my oak to craft the most fences while keeping 16 logs untouched?` The agent inspects the actual inventory, totals logs, planks, and sticks, applies the recipe ratios and reserve constraint, then returns exact crafting steps and expected leftovers.<br>
+玩家问：`@ai 按我现在的背包，橡木怎么配比才能合成最多的栅栏，同时保留 16 根原木？` Agent 会读取真实背包，汇总原木、木板与木棍，结合配方比例和保留约束，给出精确的合成步骤与预计余料。
 
-### 2. A server handbook that talks back
+This is more than finding an item in a slot: live game state becomes a constrained resource-allocation problem the agent solves for this player, right now.<br>
+这不只是“背包里有没有某件物品”，而是把实时游戏状态转化成约束明确的资源规划问题，并针对当前玩家即时求解。
 
-**会说话的服务器手册**
+### 2. Build a route from server-specific rules and live state
 
-An operator documents event rules, claims, economies, or progression in the workspace. When a player asks `@ai How do I join the weekend event?`, the agent searches with `list`, `grep`, and `read`, then answers from the real documents instead of inventing policy.<br>
-服主把活动、领地、经济或成长规则写进工作区。玩家问 `@ai 周末活动怎么参加？` 时，Agent 会用 `list`、`grep` 和 `read` 查找真实文档，而不是凭空编造玩法。
+**结合本服规则与现场状态规划路线**
 
-Workspace documents and skills are read hot, so a newly announced event can become queryable without restarting the server.<br>
-工作区文档与 Skill 会热读取，因此新活动写入文档后通常无需重启，就能立刻被玩家问到。
+An operator documents an event's checkpoints, prerequisites, time windows, forbidden shortcuts, and rewards in the workspace. A player can ask: `@ai I have iron gear and 25 minutes. Starting from here and without teleporting, which treasure-hunt route can I finish, and what am I missing?`<br>
+服主把活动检查点、前置条件、开放时段、禁止的捷径与奖励写进工作区。玩家可以问：`@ai 我穿铁装，只有 25 分钟。从这里出发且不用传送，寻宝活动走哪条路线能完成？还缺什么？`
 
-### 3. A structure scout that understands uncertainty
+The agent combines the player's inventory, current world and position with the event Skill and server documents, rejects routes that violate the constraints, and produces an ordered plan grounded in facts no general-purpose model could know. Documents and Skills are read hot, so tonight's route can change without restarting the server.<br>
+Agent 会把玩家背包、当前世界与位置，同活动 Skill 和服务器文档结合起来，排除不满足约束的路线，形成一份有顺序的行动计划。这些本服事实不是通用模型能够预知的；文档与 Skill 支持热读取，今晚的路线改动无需重启服务器即可生效。
 
-**不会冒充成功的结构向导**
+### 3. Decide whether to act, then take the next step
 
-After command dispatch is enabled, a player can ask `@ai Where is the nearest End City?` The bundled `locate-structure` skill guides the agent to dispatch `locate structure end_city` as that player. Minecraft shows the coordinates on the player's screen; Mineclaw reports only what it can prove.<br>
-启用命令分发后，玩家可以问 `@ai 最近的末地城在哪？` 内置 `locate-structure` Skill 会指导 Agent 以该玩家身份提交 `locate structure end_city`。坐标由 Minecraft 显示给玩家，Mineclaw 只报告它能确认的结果。
+**先判断是否该行动，再推进下一步**
 
-### 4. A custom plugin becomes an agent skill
+After command dispatch is enabled, a player asks: `@ai Am I ready to hunt an End City? If I am, locate the nearest one; otherwise give me the smallest useful prep list.` The agent checks inventory and equipment, verifies the current dimension, reads the bundled `locate-structure` Skill, and branches on what it finds.<br>
+启用命令分发后，玩家问：`@ai 我现在适合去找末地城吗？准备够了就帮我定位最近的；不够就给我一份最精简的补给清单。` Agent 会检查背包与装备、确认当前维度、读取内置 `locate-structure` Skill，再根据观察结果决定下一步。
 
-**把第三方插件变成 Agent Skill**
+If the conditions are met, it dispatches `locate structure end_city` as that player; otherwise it stops at a concrete preparation plan. Minecraft displays the coordinates, while Mineclaw reports only that the command was dispatched—not a success it cannot prove.<br>
+条件满足时，它会以当前玩家身份分发 `locate structure end_city`；否则停在具体的准备方案。坐标由 Minecraft 显示，Mineclaw 只报告命令已分发，不冒充自己无法证明的执行成功。
 
-Suppose a server already uses KitesPlaces. An operator can review the repository's [`kp-warps.md`](examples/skills/kp-warps.md) example, copy it into the workspace, and add narrowly scoped command rules. The agent can then discover real warp names, distinguish list/set/teleport semantics, and ask an explicitly named player to approve a cross-player request.<br>
-假设服务器已经安装 KitesPlaces，服主可以审核仓库中的 [`kp-warps.md`](examples/skills/kp-warps.md) 示例，将它复制进工作区，并添加最小范围的命令规则。之后 Agent 就能查询真实传送点、区分 list/set/teleport 语义，并在跨玩家请求中让被指定玩家本人确认。
+### 4. Turn a custom plugin into a multiplayer coordinator
 
-Mineclaw does not bundle KitesPlaces or silently gain new Java handlers from Markdown. The case demonstrates how existing tools, server commands, and operator-authored procedures can be composed into a new experience.<br>
-Mineclaw 不会捆绑 KitesPlaces，Markdown 也不能凭空生成 Java handler。这个案例展示的是：现有 Tool、服务器命令与服主规程可以组合成新的玩法体验。
+**把第三方插件变成多人协作 Agent**
+
+Suppose a server already uses KitesPlaces. After reviewing the repository's [`kp-warps.md`](examples/skills/kp-warps.md) example and adding narrow command rules, a player can ask: `@ai Find the exact farm warp and send Alice and Bob there if they are online.`<br>
+假设服务器已经安装 KitesPlaces。服主审核仓库中的 [`kp-warps.md`](examples/skills/kp-warps.md) 示例并添加最小范围的命令规则后，玩家可以说：`@ai 找到农场对应的准确传送点；Alice 和 Bob 在线的话，请他们过去。`
+
+The agent checks the online roster, obtains the real warp list through synchronous console feedback, resolves the exact name instead of guessing, and sends a separate approval request to each target player before dispatch. It is coordinating people, live server state, a third-party command language, and consent—not merely expanding a slash-command alias.<br>
+Agent 会核对在线名单，通过控制台同步反馈取得真实传送点列表，解析准确名称而不是猜测，并在分发前分别向每位目标玩家发出审批请求。它协调的是玩家、实时服务器状态、第三方命令语义与本人授权，而不只是给斜杠命令套一层别名。
+
+Mineclaw does not bundle KitesPlaces or gain new Java handlers from Markdown. The point is the reusable agent loop: **observe → retrieve server knowledge → plan → act through policy → report only what was proven**. Each server can reshape that loop with its own Skills, tools, and procedures.<br>
+Mineclaw 不会捆绑 KitesPlaces，Markdown 也不能凭空生成新的 Java handler。案例真正展示的是可复用的 Agent 闭环：**观察 → 检索本服知识 → 规划 → 按策略行动 → 只报告已证实结果**。每个服务器都能用自己的 Skill、Tool 与规程重新塑造这条链路。
 
 ## 🧩 Compatibility
 
@@ -221,7 +230,7 @@ Bundled workspace resources:<br>
 
 - `look_block` — reads the block the current player is looking at.<br>读取当前玩家准星指向的方块。
 - `feet_block` — reads the block under the current player.<br>读取当前玩家脚下的方块。
-- `inventory` — returns a redacted inventory summary.<br>返回脱敏的背包摘要。
+- `inventory` — returns slot-level item types and counts, without item metadata.<br>返回各槽位的物品类型与数量，不暴露物品元数据。
 - `online_players` — returns the current caller and online account names only.<br>只返回当前调用者与在线玩家账号名。
 - `list`, `read`, `grep` — discover and read the Mineclaw workspace.<br>发现、搜索并读取 Mineclaw 工作区。
 - `run_command` — requests a policy-checked command dispatch.<br>请求一次经过策略校验的命令分发。
