@@ -1,6 +1,7 @@
 package cc.kites.mineclaw.support;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.junit.jupiter.api.Test;
@@ -217,6 +218,51 @@ class ThrottledActionBarTest {
     }
 
     @Test
+    void rendersNamedHexAndColorTagsAcrossEveryStreamingSplitPoint() {
+        String source = "<red>named</red> <#12abef>hex</#12abef> "
+                + "<color:green>green</color>";
+        for (int split = 0; split <= source.length(); split++) {
+            Harness harness = appendAtSplit(source, split);
+            Component shown = harness.shown.getLast();
+
+            assertThat(PLAIN.serialize(shown)).as("split %s", split)
+                    .isEqualTo("named hex green");
+            assertThat(descendants(shown)).as("named split %s", split).anySatisfy(child ->
+                    assertThat(child.color()).isEqualTo(TextColor.color(0xff5555)));
+            assertThat(descendants(shown)).as("hex split %s", split).anySatisfy(child ->
+                    assertThat(child.color()).isEqualTo(TextColor.color(0x12abef)));
+            assertThat(descendants(shown)).as("parameter split %s", split).anySatisfy(child ->
+                    assertThat(child.color()).isEqualTo(TextColor.color(0x55ff55)));
+        }
+    }
+
+    @Test
+    void colorTagsDoNotConsumeTheVisibleTailBudget() {
+        Harness harness = new Harness(4);
+
+        harness.bar.append("<red>12345</red>");
+        harness.flushOne();
+
+        Component shown = harness.shown.getLast();
+        assertThat(PLAIN.serialize(shown)).isEqualTo("2345");
+        assertThat(descendants(shown)).anySatisfy(child ->
+                assertThat(child.color()).isEqualTo(TextColor.color(0xff5555)));
+    }
+
+    @Test
+    void leavesNonColorMiniMessageTagsLiteralAndNonInteractive() {
+        Harness harness = new Harness(120);
+
+        harness.bar.append("<click:run_command:'/op someone'>click</click>");
+        harness.flushOne();
+
+        Component shown = harness.shown.getLast();
+        assertThat(PLAIN.serialize(shown))
+                .isEqualTo("<click:run_command:'/op someone'>click</click>");
+        assertThat(descendants(shown)).allSatisfy(child -> assertThat(child.clickEvent()).isNull());
+    }
+
+    @Test
     void preservesAnOpenBoldSpanAcrossASoftBreakAndThenRendersTheNextParagraph() {
         Harness harness = new Harness(120);
 
@@ -333,6 +379,17 @@ class ThrottledActionBarTest {
             harness.flushOne();
         }
         return harness;
+    }
+
+    private static List<Component> descendants(Component root) {
+        ArrayList<Component> result = new ArrayList<>();
+        append(root, result);
+        return result;
+    }
+
+    private static void append(Component value, List<Component> result) {
+        result.add(value);
+        value.children().forEach(child -> append(child, result));
     }
 
     private static final class Harness implements ThrottledActionBar.Output, ThrottledActionBar.Delay {

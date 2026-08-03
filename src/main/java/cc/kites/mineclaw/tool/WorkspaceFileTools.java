@@ -1,6 +1,5 @@
 package cc.kites.mineclaw.tool;
 
-import cc.kites.mineclaw.workspace.WorkspacePathSecurity;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
@@ -27,16 +26,13 @@ import java.util.stream.Stream;
 
 /** Sandboxed, read-only, hot-reading implementation of list/read/grep. */
 public final class WorkspaceFileTools {
-    public static final String PROTECTED_CONTENT = "此文件受保护，无法读取";
     private static final long MAX_GREP_FILE_BYTES = 4L * 1024L * 1024L;
 
     private final Path root;
-    private final WorkspacePathSecurity pathSecurity;
 
     public WorkspaceFileTools(Path root) throws IOException {
         Files.createDirectories(root);
         this.root = root.toAbsolutePath().normalize();
-        this.pathSecurity = new WorkspacePathSecurity(this.root);
     }
 
     public ToolResult list(JsonObject arguments, Limits limits) {
@@ -75,9 +71,7 @@ public final class WorkspaceFileTools {
                     JsonObject item = new JsonObject();
                     item.addProperty("path", relative);
                     item.addProperty("type", type(path));
-                    boolean protectedFile = isProtected(path);
-                    item.addProperty("protected", protectedFile);
-                    if (!protectedFile && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                    if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
                         item.addProperty("size", Files.size(path));
                     }
                     items.add(item);
@@ -100,13 +94,7 @@ public final class WorkspaceFileTools {
         try {
             long deadline = deadline(limits.timeoutMillis());
             String requestedPath = arguments.get("path").getAsString();
-            if (WorkspacePathSecurity.isProtectedRequest(requestedPath)) {
-                return protectedResult(envelope);
-            }
             Path file = resolve(requestedPath, true);
-            if (isProtected(file)) {
-                return protectedResult(envelope);
-            }
             if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
                 return error(envelope, "not_file", "`path` 不是普通文件");
             }
@@ -170,15 +158,7 @@ public final class WorkspaceFileTools {
             int contextLines = boundedInt(arguments, "context_lines", 0, 0, 10);
             JsonArray matches = envelope.getAsJsonArray("matches");
             boolean truncated = false;
-            if (WorkspacePathSecurity.isProtectedRequest(requestedPath)) {
-                envelope.addProperty("truncated", false);
-                return new ToolResult("ok", envelope);
-            }
             Path target = resolve(requestedPath, true);
-            if (isProtected(target)) {
-                envelope.addProperty("truncated", false);
-                return new ToolResult("ok", envelope);
-            }
             if (Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
                 truncated = scanFile(target, pattern, maximum, contextLines, matches, deadline);
             } else if (Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
@@ -188,7 +168,6 @@ public final class WorkspaceFileTools {
                         checkDeadline(deadline);
                         Path file = iterator.next();
                         if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
-                                && !isProtected(file)
                                 && scanFile(file, pattern, maximum, contextLines, matches, deadline)) {
                             truncated = true;
                             break;
@@ -207,20 +186,8 @@ public final class WorkspaceFileTools {
         }
     }
 
-    /**
-     * Fails closed when a future edit, overwrite, move or delete operation would touch a protected
-     * file. File tools are currently read-only; mutation handlers must call this guard for every
-     * source and destination path before changing the filesystem.
-     */
-    public void requireMutationAllowed(String requestedPath) throws IOException {
-        pathSecurity.requireMutationAllowed(requestedPath);
-    }
-
     private boolean scanFile(Path file, String pattern, int maximum, int contextLines,
                              JsonArray matches, long deadline) throws IOException, ToolFailure {
-        if (isProtected(file)) {
-            return false;
-        }
         if (Files.size(file) > MAX_GREP_FILE_BYTES) {
             throw new ToolFailure("file_too_large", "grep 的单文件上限为 4 MiB：" + relativeText(file));
         }
@@ -291,10 +258,6 @@ public final class WorkspaceFileTools {
         return candidate;
     }
 
-    private boolean isProtected(Path file) throws IOException {
-        return pathSecurity.isProtected(file);
-    }
-
     /** The final path component must still be a regular file when it is actually opened. */
     private static Reader openUtf8NoFollow(Path file) throws IOException {
         return new InputStreamReader(Channels.newInputStream(Files.newByteChannel(file,
@@ -351,23 +314,17 @@ public final class WorkspaceFileTools {
     }
 
     private static ToolResult invalid(JsonObject envelope, String code, String message) {
-        envelope.addProperty("status", "error");
+        envelope.addProperty("status", "invalid");
         envelope.addProperty("error_code", code);
         envelope.addProperty("message", message);
         return new ToolResult("invalid", envelope);
     }
 
-    private static ToolResult protectedResult(JsonObject envelope) {
-        envelope.addProperty("status", "protected");
-        envelope.addProperty("content", PROTECTED_CONTENT);
-        return new ToolResult("denied", envelope);
-    }
-
     private static ToolResult error(JsonObject envelope, String code, String message) {
-        envelope.addProperty("status", "error");
         envelope.addProperty("error_code", code);
         envelope.addProperty("message", message);
         String status = code.equals("path_escape") ? "denied" : "recoverable_error";
+        envelope.addProperty("status", status);
         return new ToolResult(status, envelope);
     }
 

@@ -34,6 +34,10 @@ final class ToolArgumentValidator {
         if (typeViolation.isPresent()) {
             return typeViolation;
         }
+        Optional<Violation> enumViolation = validateEnum(value, schema.get("enum"), path);
+        if (enumViolation.isPresent()) {
+            return enumViolation;
+        }
         Optional<Violation> numericViolation = validateNumericBounds(value, schema, path);
         if (numericViolation.isPresent()) {
             return numericViolation;
@@ -45,6 +49,25 @@ final class ToolArgumentValidator {
             return validateArray(value.getAsJsonArray(), schema, path, depth);
         }
         return Optional.empty();
+    }
+
+    private static Optional<Violation> validateEnum(
+            JsonElement value, JsonElement keyword, String path) {
+        if (keyword == null) {
+            return Optional.empty();
+        }
+        if (!keyword.isJsonArray() || keyword.getAsJsonArray().isEmpty()) {
+            return violation(path, "tool schema enum must be a non-empty array");
+        }
+        for (JsonElement allowed : keyword.getAsJsonArray()) {
+            if (!isJsonScalar(allowed)) {
+                return violation(path, "tool schema enum values must be JSON scalars");
+            }
+            if (scalarEquals(value, allowed)) {
+                return Optional.empty();
+            }
+        }
+        return violation(path, "must be one of the declared enum values");
     }
 
     private static Optional<Violation> validateNumericBounds(
@@ -219,6 +242,35 @@ final class ToolArgumentValidator {
 
     private static boolean isBoolean(JsonElement value) {
         return value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean();
+    }
+
+    private static boolean isJsonScalar(JsonElement value) {
+        return value.isJsonNull() || value.isJsonPrimitive();
+    }
+
+    private static boolean scalarEquals(JsonElement first, JsonElement second) {
+        if (!isJsonScalar(first) || !isJsonScalar(second)) {
+            return false;
+        }
+        if (first.isJsonNull() || second.isJsonNull()) {
+            return first.isJsonNull() && second.isJsonNull();
+        }
+        JsonPrimitive left = first.getAsJsonPrimitive();
+        JsonPrimitive right = second.getAsJsonPrimitive();
+        if (left.isNumber() || right.isNumber()) {
+            if (!left.isNumber() || !right.isNumber()) {
+                return false;
+            }
+            try {
+                return new BigDecimal(left.getAsString()).compareTo(new BigDecimal(right.getAsString())) == 0;
+            } catch (NumberFormatException exception) {
+                return false;
+            }
+        }
+        if (left.isBoolean() || right.isBoolean()) {
+            return left.isBoolean() && right.isBoolean() && left.getAsBoolean() == right.getAsBoolean();
+        }
+        return left.isString() && right.isString() && left.getAsString().equals(right.getAsString());
     }
 
     private static String actualType(JsonElement value) {

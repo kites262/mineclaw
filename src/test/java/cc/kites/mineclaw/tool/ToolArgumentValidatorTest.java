@@ -87,6 +87,45 @@ class ToolArgumentValidatorTest {
                 .orElseThrow().message()).contains("less than or equal to 4");
     }
 
+    @Test
+    void enforcesEnumsRecursivelyUsingJsonNumericValueEquality() {
+        JsonObject schema = object("""
+                {
+                  "type":"object",
+                  "properties":{
+                    "mode":{"type":"string","enum":["safe","fast"]},
+                    "amount":{"type":"number","enum":[1,2.5]},
+                    "optional":{"type":["boolean","null"],"enum":[true,null]}
+                  },
+                  "required":["mode","amount","optional"],
+                  "additionalProperties":false
+                }
+                """);
+
+        assertThat(ToolArgumentValidator.validate(
+                object("{\"mode\":\"safe\",\"amount\":1.0,\"optional\":null}"), schema)).isEmpty();
+
+        ToolArgumentValidator.Violation violation = ToolArgumentValidator.validate(
+                object("{\"mode\":\"unsafe\",\"amount\":1,\"optional\":true}"), schema).orElseThrow();
+        assertThat(violation.path()).isEqualTo("$.mode");
+        assertThat(violation.message()).contains("enum");
+    }
+
+    @Test
+    void rejectsMalformedRuntimeEnumSchemasInsteadOfTreatingThemAsHints() {
+        JsonObject empty = object("""
+                {"type":"object","properties":{"value":{"type":"string","enum":[]}}}
+                """);
+        JsonObject composite = object("""
+                {"type":"object","properties":{"value":{"type":"string","enum":[{}]}}}
+                """);
+
+        assertThat(ToolArgumentValidator.validate(object("{\"value\":\"x\"}"), empty)
+                .orElseThrow().message()).contains("non-empty");
+        assertThat(ToolArgumentValidator.validate(object("{\"value\":\"x\"}"), composite)
+                .orElseThrow().message()).contains("JSON scalars");
+    }
+
     private static JsonObject object(String json) {
         return JsonParser.parseString(json).getAsJsonObject();
     }

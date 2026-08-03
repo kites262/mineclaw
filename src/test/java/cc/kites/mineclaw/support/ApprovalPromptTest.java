@@ -6,7 +6,6 @@ import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -17,50 +16,27 @@ class ApprovalPromptTest {
     private static final String TOKEN = "01234567-89ab-cdef-0123-456789abcdef";
 
     @Test
-    void laysOutDetailsThenTokenBoundAcceptAndRejectButtonsOnTheLastLine() {
-        Component prompt = ApprovalPrompt.render(
+    void buildsTokenBoundAcceptAndRejectControlsWithoutOwningTheirLayout() {
+        ApprovalPrompt.Controls controls = ApprovalPrompt.controls(
                 TOKEN,
-                Component.text("命令执行确认"),
-                Component.text("请求来自：Alice"),
-                Component.text("操作内容：定位最近的末地城"),
-                Component.text("命令：/locate structure end_city"),
-                Component.text("执行身份：Bob"),
-                Component.text("请在 60 秒内确认"),
-                Component.text("快捷接受：按住 Shift，视角朝向正上方，主手持有不会对空气产生效果的物品，再右键空气"),
                 Component.text("[接受]"),
                 Component.text("[拒绝]"),
                 Component.text("点击接受并提交此命令"),
                 Component.text("点击拒绝；此命令不会提交"));
 
-        assertThat(PLAIN.serialize(prompt)).isEqualTo("""
-                命令执行确认
-                请求来自：Alice
-                操作内容：定位最近的末地城
-                命令：/locate structure end_city
-                执行身份：Bob
-                请在 60 秒内确认
-                [接受]   [拒绝]""");
-
-        List<Component> clickable = descendants(prompt).stream()
-                .filter(component -> component.clickEvent() != null)
-                .toList();
-        assertThat(clickable).hasSize(2);
+        List<Component> clickable = List.of(controls.accept(), controls.reject());
+        assertThat(clickable).extracting(PLAIN::serialize).containsExactly("[接受]", "[拒绝]");
         assertCommand(clickable.get(0), "/mineclaw approve " + TOKEN);
         assertCommand(clickable.get(1), "/mineclaw reject " + TOKEN);
         assertThat(clickable).allSatisfy(component -> assertThat(component.hoverEvent()).isNotNull());
-        assertThat(hoverText(clickable.get(0))).isEqualTo(
-                "点击接受并提交此命令\n快捷接受：按住 Shift，视角朝向正上方，"
-                        + "主手持有不会对空气产生效果的物品，再右键空气");
-        assertThat(PLAIN.serialize(prompt)).doesNotContain("快捷接受");
+        assertThat(hoverText(clickable.get(0))).isEqualTo("点击接受并提交此命令");
     }
 
     @Test
     void rejectsAnythingExceptACanonicalLowercaseUuidToken() {
-        assertThatIllegalArgumentException().isThrownBy(() -> ApprovalPrompt.render(
+        assertThatIllegalArgumentException().isThrownBy(() -> ApprovalPrompt.controls(
                 "NOT-A-TOKEN",
-                Component.empty(), Component.empty(), Component.empty(), Component.empty(), Component.empty(),
-                Component.empty(), Component.empty(), Component.empty(), Component.empty(), Component.empty(),
-                Component.empty()));
+                Component.empty(), Component.empty(), Component.empty(), Component.empty()));
     }
 
     private static void assertCommand(Component component, String expected) {
@@ -79,14 +55,4 @@ class ApprovalPromptTest {
         return PLAIN.serialize((Component) event.value());
     }
 
-    private static List<Component> descendants(Component root) {
-        ArrayList<Component> result = new ArrayList<>();
-        append(root, result);
-        return result;
-    }
-
-    private static void append(Component value, List<Component> result) {
-        result.add(value);
-        value.children().forEach(child -> append(child, result));
-    }
 }

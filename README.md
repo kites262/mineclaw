@@ -9,364 +9,199 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
 
 <p>
-  <a href="https://github.com/kites262/mineclaw/releases/tag/0.1.2"><img alt="Mineclaw 0.1.2" src="https://img.shields.io/badge/Mineclaw-0.1.2-4c8bf5"></a>
+  <img alt="Mineclaw 1.0.0" src="https://img.shields.io/badge/Mineclaw-1.0.0-4c8bf5">
   <img alt="Minecraft 26.2" src="https://img.shields.io/badge/Minecraft-26.2-62b47a?logo=minecraft">
-  <img alt="Paper and Folia native" src="https://img.shields.io/badge/Paper%20%2F%20Folia-native-efc75e">
+  <img alt="Paper and Folia" src="https://img.shields.io/badge/Paper%20%2F%20Folia-native-efc75e">
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-e76f00?logo=openjdk">
-  <img alt="OpenAI-compatible API" src="https://img.shields.io/badge/API-OpenAI--compatible-412991">
+  <img alt="OpenAI-compatible Chat Completions" src="https://img.shields.io/badge/API-OpenAI--compatible-412991">
   <a href="LICENSE"><img alt="Apache License 2.0" src="https://img.shields.io/badge/License-Apache--2.0-8b5cf6"></a>
 </p>
 
 <p>
-  <a href="https://github.com/kites262/mineclaw/releases/latest"><strong>Download</strong></a>
-  ·
-  <a href="https://github.com/kites262/mineclaw"><strong>Source</strong></a>
+  <a href="https://github.com/kites262/mineclaw/releases/latest"><strong>下载</strong></a>
+  · <a href="#五分钟启动"><strong>快速开始</strong></a>
+  · <a href="docs/extensions.md"><strong>扩展能力</strong></a>
+  · <a href="docs/security.md"><strong>安全模型</strong></a>
+  · <a href="docs/operations.md"><strong>运维手册</strong></a>
 </p>
 
 </div>
 
 ---
 
-## ✨ Why Mineclaw
+Mineclaw 为 Minecraft 服务器带来一个常驻的 AI Agent。它了解这台服务器正在发生什么，也逐渐熟悉这里的规则、地图、活动、玩家习惯与插件生态；玩家用自然语言提出目标，它负责把知识、现场和能力组织成一次完整协作。
 
-**为什么是 Mineclaw**
+它像一位长期驻服的伙伴：知道资料放在哪里，需要时会查证，能把本服规则、现场状态和玩家意图放在一起。它可以回答问题，也可以规划路线、检查准备、协调玩家、使用服务器能力，并陪一项任务从想法走到结果。
 
-Mineclaw brings an agent-native experience into Minecraft. The model can combine operator-authored knowledge with live game state, plan multi-step work, discover Skills, compose tools, and request real server actions—all from public chat.<br>
-Mineclaw 把 Agent 级体验带进 Minecraft：模型能把服主编写的知识与实时游戏状态结合起来，规划多步任务，自主发现 Skill、组合 Tool，并从公共聊天中请求真实的服务器操作。
+安全的 Workspace 是它在服务器里的家。服主可以把世界设定、地图说明、活动档案、攻略、运行笔记与任何本服资料放进去；Mineclaw 会自主浏览、检索和选取文件，让自己的理解随服务器一起丰富。AGENTS 与 Skill 可以塑造它，但不会定义它的全部。
 
-- **A workspace that shapes the agent.** `AGENTS.md`, `tools.yml`, and `skills/*.md` define its identity, knowledge, procedures, and available capabilities.
-  <br>**用工作区塑造 Agent。** `AGENTS.md`、`tools.yml` 与 `skills/*.md` 共同定义身份、知识、操作规程和可用能力。
-- **Live state becomes planning input.** Read-only tools expose nearby blocks, position, inventory item types and counts, and online account names, so the agent can reason about materials, location, and participants instead of answering generic questions.
-  <br>**把实时状态变成规划依据。** 只读 Tool 可以观察附近方块、位置、背包物品类型与数量以及在线玩家账号名，让 Agent 围绕材料、地点和参与者推理，而不是只回答泛泛的问题。
-- **Skills that turn server knowledge into play.** Rules, events, custom plugin commands, and multi-step procedures become documents the model can discover and follow.
-  <br>**让服务器知识变成可玩的 Skill。** 服规、活动、第三方插件命令和多步流程都能写成模型可发现、可遵循的文档。
-- **Visible, native interaction.** Streaming output appears in the Action Bar; the completed answer is broadcast once in public chat.
-  <br>**自然、可见的服内交互。** 流式生成显示在 Action Bar，完整答案只在公屏广播一次。
-- **Built for Paper and Folia.** Entity, region, global, HTTP, and file work stay on their appropriate scheduling boundaries.
-  <br>**面向 Paper 与 Folia 构建。** 实体、区域、全局、HTTP 和文件任务各自在正确的调度边界运行。
+Mineclaw 同时连接实时世界、玩家与服务器生态。它能感知玩家此刻所处的环境和拥有的物品，也能把原版命令、第三方插件、Provider 能力和自定义工作流编排进同一个任务。随着服务器能力不断丰富，它也会成长为更完整的社区成员。
 
-## 🎮 Four jobs worth giving an agent
+## 一位服务器 Agent 能带来什么
 
-**四个值得交给 Agent 的任务**
+| 核心能力 | 带给服务器的变化 |
+| --- | --- |
+| 常驻的 Agent 身份 | 玩家拥有一个熟悉本服、能够持续协作的服务器角色 |
+| 安全的 Workspace | 服务器拥有可持续积累的本地知识空间，Agent 会自主查找并运用其中的文件 |
+| 对实时世界的感知 | 背包、装备、方块、位置和在线玩家成为理解任务的一部分 |
+| 从目标到行动 | Agent 能拆解自然语言目标，补齐信息，规划步骤，并调用服务器能力推进任务 |
+| 多玩家协作 | 选择、确认、角色分配和多人流程都可以留在游戏内自然完成 |
+| 服务器生态编排 | 原版能力、第三方插件、Provider Tool 与自定义流程可以组合成更高层的玩法 |
+| 连续的公共语境 | 对话、失败与任务进度能够延续，长会话会自动整理并保留关键上下文 |
+| 可塑造的体验 | 服主可以定义身份、知识、能力、交互方式和服务器独有的办事风格 |
 
-### 1. Optimize a crafting plan from the real inventory
+## 四种体验，看见 Agent 如何融入服务器
 
-**根据真实背包做合成优化**
+### 1. 服务器的知识真正活起来
 
-A player asks: `@ai With what I have now, how should I split my oak to craft the most fences while keeping 16 logs untouched?` The agent inspects the actual inventory, totals logs, planks, and sticks, applies the recipe ratios and reserve constraint, then returns exact crafting steps and expected leftovers.<br>
-玩家问：`@ai 按我现在的背包，橡木怎么配比才能合成最多的栅栏，同时保留 16 根原木？` Agent 会读取真实背包，汇总原木、木板与木棍，结合配方比例和保留约束，给出精确的合成步骤与预计余料。
+服主把新赛季的世界设定、活动日程、路线图、奖励规则和历史记录放进安全的 Workspace。它们可以是 Skill，也可以只是普通 Markdown、说明文件或档案目录。Mineclaw 会自己寻找与当前问题有关的资料，把散落的本服信息组织成玩家此刻需要的答案。
 
-This is more than finding an item in a slot: live game state becomes a constrained resource-allocation problem the agent solves for this player, right now.<br>
-这不只是“背包里有没有某件物品”，而是把实时游戏状态转化成约束明确的资源规划问题，并针对当前玩家即时求解。
+于是玩家可以问：
 
-### 2. Build a route from server-specific rules and live state
+> `@ai 我只有 25 分钟，穿着这套装备，从当前位置出发能完成哪条北境寻宝路线？还缺什么？`
 
-**结合本服规则与现场状态规划路线**
+Mineclaw 会同时理解活动规则、路线限制、开放时间、玩家位置和真实物资，排除不合适的方案，再给出一条属于这台服务器、这个玩家和这一刻的路线。Workspace 内容发生变化后，下一次任务自然会使用新的世界状态。
 
-An operator documents an event's checkpoints, prerequisites, time windows, forbidden shortcuts, and rewards in the workspace. A player can ask: `@ai I have iron gear and 25 minutes. Starting from here and without teleporting, which treasure-hunt route can I finish, and what am I missing?`<br>
-服主把活动检查点、前置条件、开放时段、禁止的捷径与奖励写进工作区。玩家可以问：`@ai 我穿铁装，只有 25 分钟。从这里出发且不用传送，寻宝活动走哪条路线能完成？还缺什么？`
+### 2. 对话可以继续走向行动
 
-The agent combines the player's inventory, current world and position with the event Skill and server documents, rejects routes that violate the constraints, and produces an ordered plan grounded in facts no general-purpose model could know. Documents and Skills are read hot, so tonight's route can change without restarting the server.<br>
-Agent 会把玩家背包、当前世界与位置，同活动 Skill 和服务器文档结合起来，排除不满足约束的路线，形成一份有顺序的行动计划。这些本服事实不是通用模型能够预知的；文档与 Skill 支持热读取，今晚的路线改动无需重启服务器即可生效。
+玩家可以请 Mineclaw 检查远征准备、定位结构、给予一项自助效果，或完成服主定义的其他操作。需要更多信息时，它继续问；需要玩家决定时，游戏里出现可点击的确认或选择；条件具备后，任务再向前推进。
 
-### 3. Decide whether to act, then take the next step
+发行包内置的自身药水效果就是一个完整示例：
 
-**先判断是否该行动，再推进下一步**
+> `@ai 给我 180 秒抗性提升 I。`
 
-After command dispatch is enabled, a player asks: `@ai Am I ready to hunt an End City? If I am, locate the nearest one; otherwise give me the smallest useful prep list.` The agent checks inventory and equipment, verifies the current dimension, reads the bundled `locate-structure` Skill, and branches on what it finds.<br>
-启用命令分发后，玩家问：`@ai 我现在适合去找末地城吗？准备够了就帮我定位最近的；不够就给我一份最精简的补给清单。` Agent 会检查背包与装备、确认当前维度、读取内置 `locate-structure` Skill，再根据观察结果决定下一步。
+玩家会收到一张清晰的确认卡，接受后 Mineclaw 继续推进请求，并带着实际结果回到对话。服主可以沿用同一种体验，把签到奖励、任务领取、领地操作、经济交易或活动报名变成自然语言驱动的服务器流程。
 
-If the conditions are met, it dispatches `locate structure end_city` as that player; otherwise it stops at a concrete preparation plan. Minecraft displays the coordinates, while Mineclaw reports only that the command was dispatched—not a success it cannot prove.<br>
-条件满足时，它会以当前玩家身份分发 `locate structure end_city`；否则停在具体的准备方案。坐标由 Minecraft 显示，Mineclaw 只报告命令已分发，不冒充自己无法证明的执行成功。
+### 3. 多人协作成为 Agent 的一项能力
 
-### 4. Turn a custom plugin into a multiplayer coordinator
+当任务涉及多人，Mineclaw 可以同时理解发起者的目标和每位参与者的选择。比如：
 
-**把第三方插件变成多人协作 Agent**
+> `@ai 组织 Alice、Bob 和 Carol 去北境遗迹。确认他们在线，让每个人从侦察、守卫、治疗里选一个不同角色；大家都同意后再建队并前往集合点。`
 
-Suppose a server already uses KitesPlaces. After reviewing the repository's [`kp-warps.md`](examples/skills/kp-warps.md) example and adding narrow command rules, a player can ask: `@ai Find the exact farm warp and send Alice and Bob there if they are online.`<br>
-假设服务器已经安装 KitesPlaces。服主审核仓库中的 [`kp-warps.md`](examples/skills/kp-warps.md) 示例并添加最小范围的命令规则后，玩家可以说：`@ai 找到农场对应的准确传送点；Alice 和 Bob 在线的话，请他们过去。`
+Mineclaw 可以联系每位玩家、收集角色、处理冲突、展示最终方案，再把大家带入下一阶段。有人改变主意、暂时离线或未能及时回应时，流程也会保留清晰状态。原本分散在聊天、命令和插件菜单里的协作，被组织成一段所有参与者都能理解的共同经历。
 
-The agent checks the online roster, obtains the real warp list through synchronous console feedback, resolves the exact name instead of guessing, and sends a separate approval request to each target player before dispatch. It is coordinating people, live server state, a third-party command language, and consent—not merely expanding a slash-command alias.<br>
-Agent 会核对在线名单，通过控制台同步反馈取得真实传送点列表，解析准确名称而不是猜测，并在分发前分别向每位目标玩家发出审批请求。它协调的是玩家、实时服务器状态、第三方命令语义与本人授权，而不只是给斜杠命令套一层别名。
+### 4. 现有插件生态拥有自然语言入口
 
-Mineclaw does not bundle KitesPlaces or gain new Java handlers from Markdown. The point is the reusable agent loop: **observe → retrieve server knowledge → plan → act through policy → report only what was proven**. Each server can reshape that loop with its own Skills, tools, and procedures.<br>
-Mineclaw 不会捆绑 KitesPlaces，Markdown 也不能凭空生成新的 Java handler。案例真正展示的是可复用的 Agent 闭环：**观察 → 检索本服知识 → 规划 → 按策略行动 → 只报告已证实结果**。每个服务器都能用自己的 Skill、Tool 与规程重新塑造这条链路。
+Mineclaw 可以把第三方插件的能力纳入服务器 Agent，而不改变玩家表达目标的方式。仓库中的 [KitesPlaces 示例](examples/skills/kp-warps.md) 展示了命名传送点的接入：
 
-## 🧩 Compatibility
+> `@ai 从真实传送点里找出包含“农场”的候选，确认 Alice 和 Bob 在线；只有一个准确结果时，问问他们是否愿意前往。`
 
-**兼容性**
+Mineclaw 会取得真实传送点、理解名称与用途、核对参与者，再把选择和行动串起来。同样的方式也可以连接领地、任务、经济、公会、小游戏和服主自己的插件。每接入一种能力，Agent 都会多一种理解服务器、帮助玩家完成目标的方式。
 
-- **Server:** Paper 26.2 or Folia 26.2; the descriptor declares `folia-supported: true`.
-  <br>**服务端：** Paper 26.2 或 Folia 26.2；插件描述声明 `folia-supported: true`。
-- **Runtime:** Java 25.
-  <br>**运行时：** Java 25。
-- **Model API:** a complete OpenAI-compatible Chat Completions endpoint. Tool use requires streaming and tool-call support from the provider.
-  <br>**模型接口：** 完整的 OpenAI-compatible Chat Completions 端点；Tool 模式要求上游支持流式输出与 tool calls。
-- **Other platforms:** standalone Spigot/Bukkit and other Paper or Minecraft versions are not compatibility promises.
-  <br>**其他平台：** 不承诺兼容独立 Spigot/Bukkit 或其他 Paper、Minecraft 版本。
+## Mineclaw 如何融入服务器
 
-Treat `26.2 + Java 25` as the current target, not a minimum-version declaration.<br>
-请把 `26.2 + Java 25` 视为当前适配目标，而不是最低版本。
+```mermaid
+flowchart LR
+    A["Mineclaw Agent"] <--> P["玩家与多人协作"]
+    W["安全的 Workspace<br/>服务器知识与长期资料"] --> A
+    G["实时 Minecraft 世界<br/>环境 / 背包 / 在线状态"] <--> A
+    E["服务器能力<br/>原版 / 插件 / 自定义流程"] <--> A
+    M["模型与 Provider 能力"] <--> A
+    A --> X["持续生长的<br/>服务器 Agent 体验"]
+```
 
-## 📦 Installation
+Mineclaw 位于玩家、世界、服务器知识和插件生态的交汇处。安全的 Workspace 让它拥有本地、可持续积累的理解；实时环境和服务器能力让这种理解能够落到正在发生的游戏里。具体 Tool Schema、Function API、命令边界与目录隔离留在[扩展指南](docs/extensions.md)和[安全模型](docs/security.md)中说明。
 
-**安装**
+## 五分钟启动
 
-1. Prepare a Paper/Folia 26.2 server running Java 25.<br>准备运行 Java 25 的 Paper/Folia 26.2 服务端。
-2. Download `Mineclaw-0.1.2.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest), or build it from source.<br>从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-0.1.2.jar`，或从源码构建。
-3. Stop the server and place the JAR in `plugins/`.<br>停止服务端，把 JAR 放入 `plugins/`。
-4. Start once so Mineclaw can create its default workspace.<br>启动一次，让 Mineclaw 创建默认工作区。
-5. Put the API key in `plugins/Mineclaw/.env`, then adjust `config.yml` as needed.<br>把 API 密钥写入 `plugins/Mineclaw/.env`，再按需调整 `config.yml`。
-6. Restart, or run `/mineclaw reload` as an administrator.<br>重启服务端，或由管理员执行 `/mineclaw reload`。
+运行目标：**Paper 26.2 或 Folia 26.2 + Java 25**。其他服务端、Minecraft 或 Java 版本不在当前兼容承诺内。
 
-Build from source:<br>
-从源码构建：
+1. 从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.0.0.jar`，放入服务端 `plugins/`。
+2. 启动一次，让 Mineclaw 生成默认文件，然后停止服务端。
+3. 在 `plugins/Mineclaw/.env` 写入密钥：
+
+   ```dotenv
+   MINECLAW_API_KEY=replace-with-your-secret
+   ```
+
+4. 按需修改 `providers.yml`。发行配置使用 OpenAI-compatible Chat Completions，并通过标准 `Authorization: Bearer <key>` 请求头发送凭据。
+5. 启动服务端，在公屏输入：
+
+   ```text
+   @ai 看看我脚下是什么，并告诉我背包还缺哪些远征补给
+   ```
+
+首次启动目录：
+
+```text
+plugins/Mineclaw/
+├── config.yml             # 运行限制与游戏内行为
+├── providers.yml          # Provider、模型、原生 Tool 与请求扩展
+├── whitelist.yml          # 模型直接 run_command 的策略
+├── .env                   # 凭据，不进入 JAR/Workspace
+├── message.yml            # 玩家文案与交互布局
+├── tools.yml              # 9 个内置 Tool 的 Schema 2 目录
+├── functions.yml          # 自定义 JavaScript 工作流
+└── workspace/
+    ├── AGENTS.md           # Agent 身份、工作方法与安全约束
+    └── skills/
+        ├── locate-structure.md
+        └── self-potion-effect.md
+```
+
+默认 Provider 示例包含 128K 上下文、16K 最大输出、100K 自动压缩界限、`reasoning_content` 交错回传、Session 级 `prompt_cache_key`，以及 MiMo 原生 `web_search`。所有字段和生命周期见[配置参考](docs/configuration.md)。
+
+> **从 v0.x 升级：** v1.0.0 是不兼容的大版本，不读取旧 Schema，也没有兼容转换层。先备份旧目录，用 v1 生成全新文件，再按[迁移说明](docs/operations.md#从-v0x-迁移)人工迁移意图；不要把旧配置整份覆盖回来。
+
+## 让 Agent 随服务器一起成长
+
+| 可以塑造的部分 | Mineclaw 如何生长 |
+| --- | --- |
+| 身份与氛围 | 用 AGENTS 和消息主题定义它是谁、怎样说话、如何融入社区 |
+| 本服知识 | 在安全的 Workspace 中持续加入世界设定、档案、攻略、活动和运行资料 |
+| 世界感知 | 让 Agent 理解更多与玩家、环境和服务器状态有关的实时信息 |
+| 服务器能力 | 把原版操作、第三方插件和自定义流程组合成面向目标的能力 |
+| 玩家协作 | 设计确认、选择、角色分配、报名和多人任务等游戏内体验 |
+| 模型与外部能力 | 按服务器需要选择模型，并接入 Provider 提供的原生能力 |
+
+这些部分既可以从内置示例开始，也可以随着服务器玩法逐步扩展。想了解文件分工、Tool Schema、Function API 和具体配置方式，请继续阅读[配置参考](docs/configuration.md)与[扩展指南](docs/extensions.md)。
+
+## 安全与运行边界
+
+Mineclaw 能够接触真实游戏状态并推动服务器任务，因此 Workspace、配置、玩家交互和执行能力之间有清晰边界。服主可以决定 Agent 看见什么、能使用什么、何时需要玩家参与，以及一项能力如何进入服务器。完整的隔离策略、命令路径、JavaScript 运行环境和结果语义见[安全模型](docs/security.md)。
+
+## 长对话也有自己的整理节奏
+
+公共会话让玩家和 Mineclaw 共享一段连续经历：前面的计划、遇到的失败和已经完成的步骤，会成为后续协作的背景。对话逐渐变长时，Mineclaw 会整理较早的历史，同时保留近期内容和仍然重要的任务证据。
+
+默认模型配置提供 128K 上下文、16K 最大输出和 100K 自动整理界限；管理员也可以随时使用 `/mineclaw compact` 主动整理。具体 token 计算、排队和失败恢复行为见[配置参考](docs/configuration.md#模型限制与自动压缩)。
+
+## 管理命令
+
+| 命令 | 作用 | 默认权限 |
+| --- | --- | --- |
+| `/mineclaw clear` | 清空公共 Session，并轮换 prompt cache key | OP |
+| `/mineclaw compact` | 立即压缩，或排在活动 Turn 后 | OP |
+| `/mineclaw reload` | 原子重载四个控制面文件 | OP |
+| `/mineclaw model [list\|default\|provider/model]` | 查看或切换后续 Turn 使用的模型 | OP |
+| `/mineclaw tools [validate]` | 查看/校验本地 Tool 目录，不执行 Tool | OP |
+| `/mineclaw functions [validate]` | 查看/校验 Function 与 Skill 引用，不执行 Function | OP |
+
+普通聊天权限 `mineclaw.command.chat` 默认开放；完整权限表与热更新范围见[运维手册](docs/operations.md)。
+
+## 文档
+
+- [配置参考](docs/configuration.md) — 所有文件、Schema、默认值、Provider 与重载生命周期
+- [扩展指南](docs/extensions.md) — AGENTS、Skill、Tool、Function、Bundled API 与复杂编排
+- [安全模型](docs/security.md) — 信任边界、命令路径、沙箱、Workspace 与结果证据
+- [运维手册](docs/operations.md) — 安装、v0.x 迁移、命令、诊断、构建和发布检查
+- [更新记录](CHANGELOG.md) — v1.0.0 的破坏性变化与新增能力
+
+## 从源码构建
 
 ```bash
 git clone https://github.com/kites262/mineclaw.git
 cd mineclaw
-git checkout 0.1.2
+git checkout 1.0.0
 ./gradlew --no-daemon clean test assemblePlugin
 ```
 
-Deployable artifact:<br>
-可部署产物：
+产物位于 `build/plugins/Mineclaw-1.0.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
 
-```text
-build/plugins/Mineclaw-0.1.2.jar
-```
+## 兼容性
 
-First-start data directory:<br>
-首次启动生成目录：
+v1.0.0 当前面向 Paper/Folia 26.2、Java 25 与 OpenAI-compatible Chat Completions。其他运行约定、诊断方式与升级边界见[运维手册](docs/operations.md)。
 
-```text
-plugins/Mineclaw/
-├── config.yml
-├── .env
-├── message.yml
-├── AGENTS.md
-├── tools.yml
-└── skills/
-    ├── guide.md
-    ├── command-safety.md
-    └── locate-structure.md
-```
+## License
 
-## 🔐 API configuration and `.env`
-
-**API 配置与 `.env`**
-
-`api.base_url`, `api.model`, and `api.api_key` may each contain a literal value or the name of an environment variable. Mineclaw resolves each field in this order:<br>
-`api.base_url`、`api.model` 与 `api.api_key` 均可填写字面量或环境变量名。Mineclaw 对每个字段按以下顺序解析：
-
-**Process environment → sibling `.env` → literal text in `config.yml`**<br>
-**系统环境变量 → 同目录 `.env` → `config.yml` 中的字面量**
-
-Once a higher-priority layer defines a variable—even as an empty value—fallback stops. Only a missing variable name causes the configuration text itself to be used literally.<br>
-只要更高优先级定义了该变量，即使值为空，也会终止回退；只有变量名不存在时，配置文本本身才作为字面量使用。
-
-Recommended references:<br>
-推荐写法：
-
-```yaml
-api:
-  base_url: 'MINECLAW_API_BASE_URL'
-  model: 'MINECLAW_API_MODEL'
-  api_key: 'MINECLAW_API_KEY'
-```
-
-```dotenv
-MINECLAW_API_BASE_URL=https://api.example.com/v1/chat/completions
-MINECLAW_API_MODEL=your-model-id
-MINECLAW_API_KEY=replace-with-your-secret
-```
-
-- The shipped configuration keeps the default URL and model as literals and points only the key at `MINECLAW_API_KEY`.
-  <br>发行配置保留 URL 与模型字面量，只让密钥引用 `MINECLAW_API_KEY`。
-- First start creates only an empty `MINECLAW_API_KEY=` placeholder and best-effort applies mode `0600` on POSIX filesystems.
-  <br>首次启动只创建空的 `MINECLAW_API_KEY=` 占位符，并在 POSIX 文件系统上尽力设置为 `0600`。
-- `.env` supports comments, `export`, single quotes, and double quotes, but performs no variable interpolation.
-  <br>`.env` 支持注释、`export`、单双引号，但不执行变量插值。
-- `.env` must be a regular, non-symlink UTF-8 file no larger than 64 KiB.
-  <br>`.env` 必须是非符号链接的普通 UTF-8 文件，最大 64 KiB。
-- The URL must be an absolute HTTP(S) URI; the model cannot be blank or contain whitespace/control characters. An empty key is rejected before any request.
-  <br>URL 必须是绝对 HTTP(S) 地址；模型不能为空，也不能含空白或控制字符。空密钥会在请求发出前被本地拒绝。
-- Retryable API failures are retried up to five times by default after the initial request, with exponential backoff starting at 500 ms. Set `api.max_retries` to override this.
-  <br>可重试的 API 故障默认会在首次请求后最多重试五次，指数退避从 500 毫秒开始；可通过 `api.max_retries` 覆盖。
-`config.yml` and `.env` are published as one immutable snapshot at startup or reload. A turn already in progress keeps its original snapshot.<br>
-`config.yml` 与 `.env` 会在启动或重载时组成同一个不可变快照；已经开始的 turn 继续使用原快照。
-
-See [the complete default configuration](src/main/resources/config.yml).<br>
-查看[完整默认配置](src/main/resources/config.yml)。
-
-## 🗂️ Workspace and extension model
-
-**工作区与扩展方式**
-
-- **`AGENTS.md`** defines the agent's identity, voice, priorities, operating procedure, and behavioral boundaries.
-  <br>**`AGENTS.md`** 定义 Agent 的身份、语气、优先级、操作流程与行为边界。
-- **`tools.yml`** enables, disables, and describes handlers implemented by the current Mineclaw build.
-  <br>**`tools.yml`** 启用、停用并描述当前 Mineclaw 版本已经实现的 handler。
-- **`skills/*.md`** documents server knowledge and teaches the model how to compose existing tools and commands.
-  <br>**`skills/*.md`** 保存服务器知识，并教模型如何组合现有 Tool 与命令。
-- **`message.yml`** controls player-facing messages, approval cards, and interaction hints.
-  <br>**`message.yml`** 控制玩家可见文案、审批卡和交互提示。
-
-`AGENTS.md`, `tools.yml`, `message.yml`, and skills are read hot when used. Editing them usually requires no restart. `config.yml` and `.env` take effect only at startup or after `/mineclaw reload`.<br>
-`AGENTS.md`、`tools.yml`、`message.yml` 与 Skill 会在使用时热读取，修改后通常无需重启；`config.yml` 与 `.env` 只在启动或 `/mineclaw reload` 后生效。
-
-Default seeding fills in missing files and never overwrites an existing agent, tool catalog, or skill. Markdown can teach the agent new procedures, but it cannot create a Java handler that Mineclaw does not implement or install a plugin absent from the server.<br>
-默认播种只补齐缺失文件，不覆盖已有的 Agent、Tool 目录或 Skill。Markdown 可以教 Agent 新流程，但不能凭空创造 Mineclaw 尚未实现的 Java handler，也不能安装服务器上不存在的插件。
-
-Bundled workspace resources:<br>
-内置工作区资源：
-
-- [AGENTS.md](src/main/resources/AGENTS.md)
-- [tools.yml](src/main/resources/tools.yml)
-- [message.yml](src/main/resources/message.yml)
-- [skills/](src/main/resources/skills)
-
-## 🧰 Built-in tools
-
-**内置 Tool**
-
-- `look_block` — reads the block the current player is looking at.<br>读取当前玩家准星指向的方块。
-- `feet_block` — reads the block under the current player.<br>读取当前玩家脚下的方块。
-- `inventory` — returns slot-level item types and counts, without item metadata.<br>返回各槽位的物品类型与数量，不暴露物品元数据。
-- `online_players` — returns the current caller and online account names only.<br>只返回当前调用者与在线玩家账号名。
-- `list`, `read`, `grep` — discover and read the Mineclaw workspace.<br>发现、搜索并读取 Mineclaw 工作区。
-- `run_command` — requests a policy-checked command dispatch.<br>请求一次经过策略校验的命令分发。
-
-`online_players` does not expose UUIDs, locations, worlds, permissions, or display names.<br>
-`online_players` 不暴露 UUID、位置、世界、权限或展示名。
-
-## 🛡️ Command policy and player approval
-
-**命令策略与玩家审批**
-
-Command execution is not the main source of Mineclaw's intelligence; it is an optional bridge from an agent decision to a server action. It starts disabled with `commands.run_enabled: false`.<br>
-命令执行不是 Mineclaw 智能体验的主体，而是把 Agent 决策连接到服务器操作的可选桥梁；它默认通过 `commands.run_enabled: false` 关闭。
-
-- Console commands must fully match `console_whitelist`.
-  <br>控制台命令必须完整匹配 `console_whitelist`。
-- A same-player command may dispatch directly only when the player is online and the normalized command fully matches `player_whitelist`.
-  <br>当前玩家在线且规范化命令完整匹配 `player_whitelist` 时，才可能直接分发。
-- Cross-player commands always require the actual target player's approval. Same-player commands outside the allowlist also enter approval.
-  <br>跨玩家命令始终需要实际目标玩家确认；当前玩家未命中白名单的命令也会进入确认流程。
-- Bukkit/Paper permissions still apply after Mineclaw policy accepts a request.
-  <br>即使 Mineclaw 策略允许请求，Bukkit/Paper 权限仍然生效。
-
-The approval card shows the requester, operation, command, execution identity, and expiry. Its final line contains clickable **Accept** and **Reject** buttons backed by one-time UUID tokens. Players never need to type an approve command.<br>
-审批卡会展示请求者、操作内容、命令、执行身份与有效期，最后一行提供可点击的**接受**与**拒绝**按钮，并绑定一次性 UUID 令牌。玩家无需手输 approve 命令。
-
-An optional gesture can accept a pending request: sneak, look straight up, and right-click air with a non-empty main-hand item that has no use effect in air. Empty-hand clicks and interactions that already do something—placing, throwing, eating, charging, blocking, tool use, or unknown custom behavior—are excluded.<br>
-待确认时也可使用快捷手势：按住 Shift、视角朝正上方，并用主手中“对空气使用不会产生效果”的非空物品右键空气。空手以及放置、投掷、进食、蓄力、格挡、工具使用或未知自定义行为都不会触发。
-
-**Dispatched does not mean succeeded.** Player dispatch confirms only that Bukkit accepted the command for dispatch; it cannot capture all player-facing feedback or prove side effects. Console dispatch may capture synchronous feedback, but that still does not prove every downstream effect completed.<br>
-**分发成功不等于实际执行成功。** 玩家命令只能确认 Bukkit 接受了分发，无法捕获全部玩家反馈，也不能证明副作用完成；控制台命令可能捕获同步反馈，但仍不能证明所有后续效果已经完成。
-
-Mineclaw distinguishes player offline, command not found, dispatch rejected, execution exception, and unknown outcome instead of collapsing them into success.<br>
-Mineclaw 会区分玩家离线、命令未找到、分发被拒绝、执行异常与结果未知，不会把它们统一包装成成功。
-
-## 🔒 Protected files and workspace boundary
-
-**敏感文件与工作区边界**
-
-- `config.yml` and `.env` may appear in listings, but expose only path, type, and `protected: true`—never size or contents.
-  <br>`config.yml` 与 `.env` 可以出现在文件列表，但只暴露路径、类型和 `protected: true`，不返回大小或内容。
-- `read` returns a fixed protected response; `grep` skips both files.
-  <br>`read` 只返回固定保护提示，`grep` 会跳过这两个文件。
-- Direct paths, normalized aliases, symlink aliases, and hard-link aliases receive the same protection.
-  <br>直接路径、规范化别名、符号链接别名和硬链接别名都受同一保护。
-- Absolute paths, `..` traversal, and symlink escape are rejected.
-  <br>绝对路径、`..` 穿越和符号链接逃逸都会被拒绝。
-- Current file tools are read-only: `list`, `read`, and `grep`. No edit, overwrite, move, or delete handler is exposed.
-  <br>当前文件 Tool 只有只读的 `list`、`read` 与 `grep`，不提供编辑、覆盖、移动或删除 handler。
-
-The model cannot elevate itself, edit protected configuration, read secrets, or bypass server permissions. AI is not OP; server policy remains authoritative.<br>
-模型不能自行提权、编辑受保护配置、读取密钥或绕过服务器权限。AI 不是 OP，服务器策略始终拥有最终裁决权。
-
-## 💬 Usage and permissions
-
-**使用方式与权限**
-
-- `@ai <question>` — starts a public AI turn. Permission: `mineclaw.command.chat` (default `true`).<br>发起一次公共 AI 对话。权限：`mineclaw.command.chat`（默认 `true`）。
-- `/mineclaw clear` — clears the server-wide public session. Permission: `mineclaw.command.clear` (OP).<br>清空全服公共 Session。权限：`mineclaw.command.clear`（OP）。
-- `/mineclaw reload` — atomically reloads `config.yml` and `.env`. Permission: `mineclaw.command.reload` (OP).<br>原子重载 `config.yml` 与 `.env`。权限：`mineclaw.command.reload`（OP）。
-- `/mineclaw tools` — shows the current tool catalog status. Permission: `mineclaw.command.tools` (OP).<br>查看当前 Tool 目录状态。权限：`mineclaw.command.tools`（OP）。
-- `mineclaw.command.approve` (default `true`) — receive and act on approvals addressed to the player.<br>接收并处理发给自己的审批。
-- `mineclaw.bypass.ratelimit` (default `false`) — bypass the per-player rate limit.<br>绕过玩家级速率限制。
-
-The public chat prefix defaults to `@ai` and can be changed with `chat.public_prefix`.<br>
-公共聊天前缀默认为 `@ai`，可通过 `chat.public_prefix` 修改。
-
-## 🖥️ Runtime behavior
-
-**运行时行为**
-
-- Only one AI turn runs server-wide at a time. Requests received while busy are rejected and never enter the session.
-  <br>全服同一时间只运行一个 AI turn；忙碌时收到的请求会被拒绝，也不会进入 Session。
-- The public session is server-wide and in-memory. It stores only completed user/assistant turns, not internal tool messages.
-  <br>公共 Session 是全服共享的内存状态，只保存已完成的 user/assistant 轮次，不保存内部 Tool 消息。
-- Restarting, disabling the plugin, or running `clear` removes the session.
-  <br>重启、停用插件或执行 `clear` 会清空 Session。
-- `context.max_messages` retains recent complete turns; reaching `context.max_tokens` clears the server session.
-  <br>`context.max_messages` 保留最近的完整轮次；达到 `context.max_tokens` 时清空服务器 Session。
-- The Action Bar starts with the configurable `actionbar_thinking` message (`Thinking...` by default). Between tool rounds, retries, and paragraphs, the current frame remains visible until the next renderable character atomically replaces it; low-frequency refreshes prevent it from fading during a long wait.
-  <br>Action Bar 会先显示可配置的 `actionbar_thinking` 文案（默认 `Thinking...`）。在 Tool 轮次、重试与段落之间，当前画面会保留到下一个可显示字符原位替换，并通过低频刷新避免长时间等待时提前淡出。
-- One newline becomes a space or soft break. A blank line—two or more consecutive newlines—starts a fresh internal paragraph without first sending an empty frame. CRLF and stream-chunk boundaries are normalized.
-  <br>单个换行作为空格或软换行；空行（两个及以上连续换行）会开始新的内部段落，但不会预先发送空帧，同时正确处理 CRLF 与跨流式分片边界。
-- Safe Markdown rendering currently focuses on real `**bold**` formatting.
-  <br>当前安全 Markdown 渲染重点支持真正的 `**粗体**`。
-
-## 🔧 Configuration map
-
-**配置速览**
-
-- `api` — endpoint, key, model, timeout, and retries.<br>端点、密钥、模型、超时与重试。
-- `context` — session message and token limits.<br>Session 消息与 token 上限。
-- `chat` — public prefix, wake pattern, reply length, and Action Bar length.<br>公共前缀、唤醒规则、回复长度与 Action Bar 长度。
-- `tools`, `commands` — tool switches, command dispatch, and allowlists.<br>Tool 开关、命令分发与白名单。
-- `rate_limit` — per-player and global cooldowns.<br>玩家级与全局冷却。
-- `workspace`, `file_tools` — default seeding and read-only file limits.<br>默认资源播种与只读文件限制。
-- `turn` — maximum tool rounds and calls per turn.<br>每个 turn 的最大 Tool 轮次与调用数。
-- `identity`, `environment` — fallback name, observation distance, inventory summary, and tool cooldown.<br>回退名称、观察距离、背包摘要与 Tool 冷却。
-- `logging` — plugin log level.<br>插件日志级别。
-
-Command regexes use full-match semantics. Scope every pattern deliberately: a broad expression grants broad dispatch authority.<br>
-命令正则采用完整匹配语义。请有意识地限定每条表达式；过宽的规则等同于授予过宽的分发能力。
-
-## 🧪 Build and verification
-
-**构建与验证**
-
-The project uses Gradle Wrapper 9.5.0, Java toolchain 25, and Paper API `26.2.build.87-stable`. `assemblePlugin` produces a deployable JAR containing runtime dependencies.<br>
-项目使用 Gradle Wrapper 9.5.0、Java toolchain 25 与 Paper API `26.2.build.87-stable`；`assemblePlugin` 会生成包含运行时依赖的可部署 JAR。
-
-```bash
-./gradlew --no-daemon clean test assemblePlugin
-```
-
-JVM tests cover parsing, policy, rendering, protected files, and dispatch semantics. They cannot prove real Folia scheduler behavior or compatibility with every external plugin; verify high-risk changes on an actual 26.2 server.<br>
-JVM 测试覆盖解析、策略、渲染、敏感文件保护与分发语义，但无法证明真实 Folia 调度行为或所有外部插件兼容性；高风险改动仍应在实际 26.2 服务端验证。
-
-## ⚠️ Deliberate boundaries
-
-**有意保留的边界**
-
-- Mineclaw does not grant the model OP or replace Bukkit/Paper permission checks.<br>Mineclaw 不授予模型 OP，也不代替 Bukkit/Paper 权限检查。
-- Enabling tools does not implicitly enable command dispatch.<br>启用 Tool 不会隐式开启命令分发。
-- Approval authorizes one dispatch attempt, not proof of its outcome.<br>接受审批只授权一次分发尝试，不代表操作已经完成。
-- Player-facing command feedback is not automatically returned to the model.<br>玩家屏幕上的命令反馈不会自动回传给模型。
-- The gesture shortcut does not support an empty hand; clickable buttons remain the primary path.<br>快捷审批不支持空手；可点击按钮仍是主要交互。
-- A Markdown skill cannot create a missing tool handler or install an absent server plugin.<br>Markdown Skill 不能创造不存在的 Tool handler，也不能安装服务器上没有的插件。
-- The current conversation is public, server-wide, in-memory, and single-turn-at-a-time—not a private agent or persistent memory.<br>当前对话是全服公共、内存态、单并发，不是私聊 Agent 或持久记忆。
-
----
-
-<div align="center">
-
-**Build the agent your server deserves.**<br>
-**为你的 Minecraft 服务器，塑造一个真正属于它的 Agent。**
-
-</div>
+[Apache License 2.0](LICENSE) © Mineclaw contributors。第三方声明见 [NOTICE](NOTICE)。

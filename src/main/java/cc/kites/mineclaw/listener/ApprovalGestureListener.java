@@ -2,6 +2,7 @@ package cc.kites.mineclaw.listener;
 
 import cc.kites.mineclaw.approval.ApprovalManager;
 import cc.kites.mineclaw.commandexec.CommandExecutor;
+import cc.kites.mineclaw.interaction.InteractionManager;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import org.bukkit.Material;
 import org.bukkit.event.Event;
@@ -27,6 +28,14 @@ public final class ApprovalGestureListener implements Listener {
 
     public ApprovalGestureListener(CommandExecutor commands) {
         this(commands::approveCurrent, ApprovalGestureListener::safeNoOpAirItem);
+    }
+
+    public ApprovalGestureListener(InteractionManager interactions) {
+        this(playerId -> interactions.approveCurrentConfirm(playerId)
+                        == InteractionManager.Outcome.APPROVED
+                        ? ApprovalManager.ApprovalOutcome.STARTED
+                        : ApprovalManager.ApprovalOutcome.NONE,
+                ApprovalGestureListener::safeNoOpAirItem);
     }
 
     ApprovalGestureListener(Approver approvals, ItemSafety itemSafety) {

@@ -102,7 +102,12 @@ public final class FoliaTasks {
     private <T> Tracked<T> tracked() {
         Tracked<T> tracked = new Tracked<>();
         outstanding.add(tracked);
-        tracked.future.whenComplete((ignored, failure) -> outstanding.remove(tracked));
+        tracked.future.whenComplete((ignored, failure) -> {
+            if (tracked.future.isCancelled()) {
+                tracked.cancelFromCaller();
+            }
+            outstanding.remove(tracked);
+        });
         if (!open()) {
             tracked.cancel("plugin disabled or Folia task lifecycle closed");
         }
@@ -166,6 +171,11 @@ public final class FoliaTasks {
 
         private void cancel(String message) {
             finish(State.CANCELLED, new IllegalStateException(message));
+        }
+
+        private void cancelFromCaller() {
+            state.getAndUpdate(current -> current == State.FINISHED || current == State.CANCELLED
+                    ? current : State.CANCELLED);
         }
 
         private void finish(State terminal, Throwable failure) {

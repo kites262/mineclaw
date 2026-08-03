@@ -1,5 +1,6 @@
 package cc.kites.mineclaw.commandexec;
 
+import cc.kites.mineclaw.interaction.InteractionManager;
 import cc.kites.mineclaw.support.FoliaTasks;
 import cc.kites.mineclaw.support.MessageService;
 
@@ -19,7 +20,7 @@ import java.util.concurrent.Executor;
 import java.util.function.BooleanSupplier;
 
 /** Production command boundary. All server and player work is transferred to its Folia owner. */
-final class BukkitCommandRuntime implements CommandRuntime {
+public final class BukkitCommandRuntime implements CommandRuntime {
     private static final PlainTextComponentSerializer PLAIN = PlainTextComponentSerializer.plainText();
 
     private final Server server;
@@ -28,8 +29,8 @@ final class BukkitCommandRuntime implements CommandRuntime {
     private final Executor ioExecutor;
     private final CommandRootIndex commandRoots;
 
-    BukkitCommandRuntime(Server server, FoliaTasks tasks, MessageService messages, Executor ioExecutor,
-                         CommandRootIndex commandRoots) {
+    public BukkitCommandRuntime(Server server, FoliaTasks tasks, MessageService messages, Executor ioExecutor,
+                                CommandRootIndex commandRoots) {
         this.server = Objects.requireNonNull(server, "server");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
         this.messages = Objects.requireNonNull(messages, "messages");
@@ -79,6 +80,9 @@ final class BukkitCommandRuntime implements CommandRuntime {
                 feedback.accept(plain);
             });
             try {
+                if (!guard.getAsBoolean()) {
+                    return CommandDispatchResult.dispatchRejected();
+                }
                 boolean accepted = server.dispatchCommand(sender, command);
                 String captured = feedback.closeAndGet();
                 return accepted
@@ -115,6 +119,9 @@ final class BukkitCommandRuntime implements CommandRuntime {
                     return CommandDispatchResult.playerOffline();
                 }
                 try {
+                    if (!guard.getAsBoolean()) {
+                        return CommandDispatchResult.dispatchRejected();
+                    }
                     boolean accepted = lookup.player().performCommand(command);
                     // performCommand only exposes dispatch acceptance. Player-visible command
                     // feedback and the command's actual effect are intentionally not inferred.
@@ -153,10 +160,42 @@ final class BukkitCommandRuntime implements CommandRuntime {
 
     @Override
     public CompletionStage<Boolean> sendApprovalPrompt(OnlinePlayer target, Map<String, String> values) {
+        return sendApprovalPromptGuarded(target, values, () -> true);
+    }
+
+    @Override
+    public CompletionStage<Boolean> sendApprovalPromptGuarded(
+            OnlinePlayer target,
+            Map<String, String> values,
+            BooleanSupplier guard
+    ) {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(values, "values");
+        Objects.requireNonNull(guard, "guard");
         return CompletableFuture.supplyAsync(() -> messages.renderApprovalPrompt(values), ioExecutor)
-                .thenCompose(message -> send(target, message, true));
+                .thenCompose(message -> send(target, message, true, guard));
+    }
+
+    @Override
+    public CompletionStage<Boolean> sendInteractionPrompt(
+            OnlinePlayer target, String token, InteractionManager.Interaction interaction) {
+        return sendInteractionPromptGuarded(target, token, interaction, () -> true);
+    }
+
+    @Override
+    public CompletionStage<Boolean> sendInteractionPromptGuarded(
+            OnlinePlayer target,
+            String token,
+            InteractionManager.Interaction interaction,
+            BooleanSupplier guard
+    ) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(token, "token");
+        Objects.requireNonNull(interaction, "interaction");
+        Objects.requireNonNull(guard, "guard");
+        return CompletableFuture.supplyAsync(
+                        () -> messages.renderInteractionPrompt(token, interaction), ioExecutor)
+                .thenCompose(message -> send(target, message, true, guard));
     }
 
     private CompletionStage<Boolean> send(OnlinePlayer target, Component message) {
@@ -165,12 +204,18 @@ final class BukkitCommandRuntime implements CommandRuntime {
 
     private CompletionStage<Boolean> send(OnlinePlayer target, Component message,
                                           boolean requireApprovalPermission) {
+        return send(target, message, requireApprovalPermission, () -> true);
+    }
+
+    private CompletionStage<Boolean> send(OnlinePlayer target, Component message,
+                                          boolean requireApprovalPermission, BooleanSupplier guard) {
+        Objects.requireNonNull(guard, "guard");
         return tasks.global(() -> server.getPlayer(target.uuid())).thenCompose(player -> {
             if (player == null) {
                 return CompletableFuture.completedFuture(Boolean.FALSE);
             }
             return tasks.entity(player, () -> {
-                if (!player.isOnline() || requireApprovalPermission
+                if (!guard.getAsBoolean() || !player.isOnline() || requireApprovalPermission
                         && !player.hasPermission("mineclaw.command.approve")) {
                     return Boolean.FALSE;
                 }

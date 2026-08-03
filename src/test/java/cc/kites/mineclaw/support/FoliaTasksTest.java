@@ -110,6 +110,24 @@ class FoliaTasksTest {
     }
 
     @Test
+    void callerCancellationMakesQueuedSupplierCallbacksInert() {
+        Harness harness = new Harness();
+        AtomicInteger invocations = new AtomicInteger();
+        CompletableFuture<Integer> entity = harness.tasks.entity(
+                harness.entity, invocations::incrementAndGet);
+        CompletableFuture<Integer> global = harness.tasks.global(invocations::incrementAndGet);
+
+        assertThat(entity.cancel(true)).isTrue();
+        assertThat(global.cancel(true)).isTrue();
+        harness.entityScheduler.runTask();
+        harness.globalScheduler.runTask();
+
+        assertThat(invocations).hasValue(0);
+        assertThat(entity).isCancelled();
+        assertThat(global).isCancelled();
+    }
+
+    @Test
     void supplierThrowableStillCompletesFutureExceptionally() {
         Harness harness = new Harness();
         CompletableFuture<String> future = harness.tasks.global(() -> {

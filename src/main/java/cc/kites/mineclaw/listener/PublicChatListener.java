@@ -1,6 +1,6 @@
 package cc.kites.mineclaw.listener;
 
-import cc.kites.mineclaw.config.ConfigStore;
+import cc.kites.mineclaw.config.ControlPlaneStore;
 import cc.kites.mineclaw.config.MineclawConfig;
 import cc.kites.mineclaw.support.MessageService;
 import cc.kites.mineclaw.support.PlayerChannel;
@@ -29,14 +29,14 @@ import java.util.concurrent.TimeoutException;
 public final class PublicChatListener implements Listener {
     private static final PlainTextComponentSerializer PLAIN = PlainTextComponentSerializer.plainText();
 
-    private final ConfigStore config;
+    private final ControlPlaneStore config;
     private final TurnCoordinator turns;
     private final MessageService messages;
     private final PlayerChannel channel;
     private final FoliaTasks tasks;
     private final Executor ioExecutor;
 
-    public PublicChatListener(ConfigStore config, TurnCoordinator turns,
+    public PublicChatListener(ControlPlaneStore config, TurnCoordinator turns,
                               MessageService messages, PlayerChannel channel, FoliaTasks tasks,
                               Executor ioExecutor) {
         this.config = Objects.requireNonNull(config, "config");
@@ -49,7 +49,7 @@ public final class PublicChatListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onChat(AsyncChatEvent event) {
-        MineclawConfig.Chat chat = config.get().chat();
+        MineclawConfig.Chat chat = config.get().config().chat();
         Optional<String> parsed = parseWake(PLAIN.serialize(event.message()), chat);
         if (parsed.isEmpty()) {
             return;

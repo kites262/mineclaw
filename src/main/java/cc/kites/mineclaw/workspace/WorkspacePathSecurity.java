@@ -16,7 +16,8 @@ import java.util.Set;
 
 /** Shared fail-closed path policy for files in one Mineclaw Workspace. */
 public final class WorkspacePathSecurity {
-    private static final Set<String> PROTECTED_FILE_NAMES = Set.of("config.yml", ".env");
+    private static final Set<String> PROTECTED_FILE_NAMES =
+            Set.of("config.yml", ".env", "providers.yml", "whitelist.yml", "functions.yml");
     private static final String DENIED_PATH = "Workspace resource";
     private static final String DENIED_REASON = "unsafe workspace path";
 
@@ -42,7 +43,7 @@ public final class WorkspacePathSecurity {
     /** Validates that one fixed Workspace resource is a safe readable regular file. */
     public Path requireFixedReadable(Path path, String expectedName) throws IOException {
         Path candidate = requireFixedCandidate(path, expectedName);
-        requireReadableRegularFile(candidate);
+        requireReadableRegularFile(candidate, expectedName);
         return candidate;
     }
 
@@ -66,76 +67,9 @@ public final class WorkspacePathSecurity {
             throw denied();
         }
         if (Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
-            requireReadableRegularFile(candidate);
+            requireReadableRegularFile(candidate, expectedName);
         }
         return candidate;
-    }
-
-    /** Returns whether a normalized request names a protected file or one of its descendants. */
-    public static boolean isProtectedRequest(String value) {
-        if (value == null) {
-            return false;
-        }
-        try {
-            Path path = Path.of(value);
-            if (path.isAbsolute()) {
-                return false;
-            }
-            Path normalized = path.normalize();
-            return PROTECTED_FILE_NAMES.stream().map(Path::of).anyMatch(normalized::startsWith);
-        } catch (InvalidPathException exception) {
-            return false;
-        }
-    }
-
-    /** Detects direct names, descendants, real-path aliases and hard links to protected files. */
-    public boolean isProtected(Path file) throws IOException {
-        Path normalized = file.toAbsolutePath().normalize();
-        for (String name : PROTECTED_FILE_NAMES) {
-            Path protectedFile = root.resolve(name);
-            if (normalized.startsWith(protectedFile)) {
-                return true;
-            }
-            if (Files.exists(protectedFile) && Files.exists(file)) {
-                Path realProtectedFile = protectedFile.toRealPath();
-                Path realFile = file.toRealPath();
-                if (realFile.startsWith(realProtectedFile) || Files.isSameFile(file, protectedFile)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Fails closed when a future edit, overwrite, move or delete operation would touch a protected
-     * file. Mutation handlers must call this for every source and destination path.
-     */
-    public void requireMutationAllowed(String requestedPath) throws IOException {
-        MutationTarget target;
-        try {
-            target = resolveMutationTarget(requestedPath);
-        } catch (InvalidPathException exception) {
-            throw denied();
-        }
-        Path realRoot = root.toRealPath();
-        for (String name : PROTECTED_FILE_NAMES) {
-            Path protectedFile = root.resolve(name);
-            Path effectiveProtectedFile = realRoot.resolve(name);
-            Path realProtectedFile = Files.exists(protectedFile)
-                    ? protectedFile.toRealPath() : effectiveProtectedFile;
-            boolean sameExistingFile = Files.exists(protectedFile) && Files.exists(target.candidate())
-                    && Files.isSameFile(target.candidate(), protectedFile);
-            if (overlaps(target.effective(), effectiveProtectedFile)
-                    || overlaps(target.effective(), realProtectedFile)
-                    || sameExistingFile) {
-                throw denied();
-            }
-        }
-    }
-
-    private static boolean overlaps(Path mutationTarget, Path protectedTarget) {
-        return mutationTarget.startsWith(protectedTarget) || protectedTarget.startsWith(mutationTarget);
     }
 
     private Path requireFixedCandidate(Path path, String expectedName) throws IOException {
@@ -171,10 +105,10 @@ public final class WorkspacePathSecurity {
         return candidate;
     }
 
-    private void requireReadableRegularFile(Path candidate) throws IOException {
+    private void requireReadableRegularFile(Path candidate, String expectedName) throws IOException {
         if (Files.isSymbolicLink(candidate)
                 || !Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)
-                || isProtected(candidate)) {
+                || aliasesProtectedNameOtherThan(candidate, expectedName)) {
             throw denied();
         }
         try {
@@ -192,39 +126,32 @@ public final class WorkspacePathSecurity {
         }
     }
 
-    private MutationTarget resolveMutationTarget(String text) throws IOException {
-        Path relative = text == null || text.isBlank() ? Path.of("") : Path.of(text);
-        if (relative.isAbsolute()) {
-            throw denied();
+    /**
+     * A trusted fixed loader may read the protected file it names exactly. It must still reject a
+     * hard-link collision with any other protected resource (for example functions.yml linked to
+     * config.yml), while ordinary fixed resources such as AGENTS.md remain unable to alias any
+     * protected file.
+     */
+    private boolean aliasesProtectedNameOtherThan(Path file, String expectedName) throws IOException {
+        String allowedName = PROTECTED_FILE_NAMES.contains(expectedName) ? expectedName : null;
+        Path normalized = file.toAbsolutePath().normalize();
+        for (String name : PROTECTED_FILE_NAMES) {
+            if (name.equals(allowedName)) {
+                continue;
+            }
+            Path protectedFile = root.resolve(name);
+            if (normalized.startsWith(protectedFile)) {
+                return true;
+            }
+            if (Files.exists(protectedFile) && Files.exists(file)
+                    && Files.isSameFile(file, protectedFile)) {
+                return true;
+            }
         }
-        Path candidate = root.resolve(relative).normalize();
-        if (!candidate.startsWith(root)) {
-            throw denied();
-        }
-
-        Path existingAncestor = candidate;
-        while (existingAncestor != null && Files.notExists(existingAncestor, LinkOption.NOFOLLOW_LINKS)) {
-            existingAncestor = existingAncestor.getParent();
-        }
-        if (existingAncestor == null) {
-            throw denied();
-        }
-        Path realRoot = root.toRealPath();
-        Path realAncestor = existingAncestor.toRealPath();
-        if (!realAncestor.startsWith(realRoot)) {
-            throw denied();
-        }
-        Path effective = realAncestor.resolve(existingAncestor.relativize(candidate)).normalize();
-        if (!effective.startsWith(realRoot)) {
-            throw denied();
-        }
-        return new MutationTarget(candidate, effective);
+        return false;
     }
 
     private static AccessDeniedException denied() {
         return new AccessDeniedException(DENIED_PATH, null, DENIED_REASON);
-    }
-
-    private record MutationTarget(Path candidate, Path effective) {
     }
 }

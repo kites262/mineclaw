@@ -1,107 +1,153 @@
-- name: look_block
-  handler: look_block
-  description: 读取当前对话玩家准星指向的方块类型与坐标
-  parameters:
-    type: object
-    properties: {}
-    additionalProperties: false
-  enabled: true
+schema: 2
+tools:
+  - handler: look_block
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: look_block
+        description: 读取当前对话玩家准星指向的方块类型与坐标
+        parameters:
+          type: object
+          properties: {}
+          additionalProperties: false
 
-- name: feet_block
-  handler: feet_block
-  description: 读取当前对话玩家脚下的方块类型与坐标
-  parameters:
-    type: object
-    properties: {}
-    additionalProperties: false
-  enabled: true
+  - handler: feet_block
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: feet_block
+        description: 读取当前对话玩家脚下的方块类型与坐标
+        parameters:
+          type: object
+          properties: {}
+          additionalProperties: false
 
-- name: inventory
-  handler: inventory
-  description: 读取当前对话玩家的脱敏背包摘要
-  parameters:
-    type: object
-    properties: {}
-    additionalProperties: false
-  enabled: true
+  - handler: inventory
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: inventory
+        description: 读取当前对话玩家的脱敏背包摘要
+        parameters:
+          type: object
+          properties: {}
+          additionalProperties: false
 
-- name: online_players
-  handler: online_players
-  description: 返回本轮对话发起玩家的账号名，以及当前在线玩家的账号名列表
-  parameters:
-    type: object
-    properties: {}
-    additionalProperties: false
-  enabled: true
+  - handler: online_players
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: online_players
+        description: 返回本轮对话发起玩家的账号名，以及当前在线玩家的账号名列表
+        parameters:
+          type: object
+          properties: {}
+          additionalProperties: false
 
-- name: list
-  handler: list
-  description: 列出 Mineclaw Workspace 内的文件和目录；受保护文件仅返回 path、type 与 protected 标记
-  parameters:
-    type: object
-    properties:
-      path:
-        type: string
-      depth:
-        type: integer
-        minimum: 0
-      limit:
-        type: integer
-        minimum: 1
-    additionalProperties: false
-  enabled: true
+  - handler: call_function
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: call_function
+        description: 调用 Skill 明确说明的服务器自定义 Function；必须使用准确的 Function 名称和参数，不得猜测
+        parameters:
+          type: object
+          properties:
+            function:
+              type: string
+              description: Skill 中明确给出的 Function 完整名称
+            arguments:
+              type: object
+              description: 传给该 Function 的参数对象
+              additionalProperties: true
+          required: [function, arguments]
+          additionalProperties: false
 
-- name: read
-  handler: read
-  description: 读取 Mineclaw Workspace 内的文本文件；config.yml 与 .env 只返回 protected 提示
-  parameters:
-    type: object
-    properties:
-      path:
-        type: string
-      offset:
-        type: integer
-        minimum: 0
-      max_chars:
-        type: integer
-        minimum: 1
-    required: [path]
-    additionalProperties: false
-  enabled: true
+  - handler: list
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: list
+        description: 列出独立 Mineclaw Workspace 内的文件和目录；插件配置与可执行目录不在此文件树中
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+            depth:
+              type: integer
+              minimum: 0
+            limit:
+              type: integer
+              minimum: 1
+          additionalProperties: false
 
-- name: grep
-  handler: grep
-  description: 在 Mineclaw Workspace 内按字面量搜索文本；始终跳过 config.yml 与 .env
-  parameters:
-    type: object
-    properties:
-      pattern:
-        type: string
-      path:
-        type: string
-      max_results:
-        type: integer
-        minimum: 1
-      context_lines:
-        type: integer
-        minimum: 0
-    required: [pattern]
-    additionalProperties: false
-  enabled: true
+  - handler: read
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: read
+        description: 读取独立 Mineclaw Workspace 内的文本文件；拒绝绝对路径、路径穿越与符号链接逃逸
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+            offset:
+              type: integer
+              minimum: 0
+            max_chars:
+              type: integer
+              minimum: 1
+          required: [path]
+          additionalProperties: false
 
-- name: run_command
-  handler: run_command
-  description: 按配置白名单或玩家确认流程分发命令；player 必须显式提供，null 表示控制台。dispatched 仅表示命令已提交；execution_result 为 unknown 时不得声称执行成功
-  parameters:
-    type: object
-    properties:
-      command:
-        type: string
-      intent:
-        type: string
-        description: 向确认玩家展示的简短操作说明，直接说清要做什么、由谁执行以及涉及谁
-      player:
-        type: [string, 'null']
-    required: [command, intent, player]
-    additionalProperties: false
-  enabled: true
+  - handler: grep
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: grep
+        description: 在独立 Mineclaw Workspace 内按字面量搜索文本；插件配置与可执行目录位于搜索根之外
+        parameters:
+          type: object
+          properties:
+            pattern:
+              type: string
+            path:
+              type: string
+            max_results:
+              type: integer
+              minimum: 1
+            context_lines:
+              type: integer
+              minimum: 0
+          required: [pattern]
+          additionalProperties: false
+
+  - handler: run_command
+    enabled: true
+    payload:
+      type: function
+      function:
+        name: run_command
+        description: 按 whitelist.yml 的本轮不可变策略或玩家确认流程分发命令；player 必须显式提供，null 表示控制台。dispatched 仅表示命令已提交；execution_result 为 unknown 时不得声称执行成功
+        parameters:
+          type: object
+          properties:
+            command:
+              type: string
+            intent:
+              type: string
+              description: 向确认玩家展示的简短操作说明，直接说清要做什么、由谁执行以及涉及谁
+            player:
+              type: [string, 'null']
+          required: [command, intent, player]
+          additionalProperties: false

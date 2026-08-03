@@ -57,7 +57,7 @@ class WorkspaceServiceTest {
 
     @Test
     void bundledAgentAndRuntimeReseedTemplateStayIdentical() throws Exception {
-        try (var stream = WorkspaceServiceTest.class.getResourceAsStream("/AGENTS.md")) {
+        try (var stream = WorkspaceServiceTest.class.getResourceAsStream("/workspace/AGENTS.md")) {
             assertThat(stream).isNotNull();
             assertThat(new String(stream.readAllBytes(), StandardCharsets.UTF_8))
                     .isEqualTo(WorkspaceService.DEFAULT_AGENT_TEMPLATE);

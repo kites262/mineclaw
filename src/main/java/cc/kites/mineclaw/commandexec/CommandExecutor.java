@@ -2,6 +2,7 @@ package cc.kites.mineclaw.commandexec;
 
 import cc.kites.mineclaw.approval.ApprovalManager;
 import cc.kites.mineclaw.config.MineclawConfig;
+import cc.kites.mineclaw.interaction.InteractionManager;
 import cc.kites.mineclaw.support.AuditLogger;
 import cc.kites.mineclaw.support.FoliaTasks;
 import cc.kites.mineclaw.support.MessageService;
@@ -23,6 +24,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /** Implements the {@code run_command} policy without performing Bukkit work off-owner. */
@@ -99,7 +102,29 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
      * execution is completed; an approval execution contains a continuation completed after approve/timeout.
      */
     public CompletableFuture<ToolExecution> execute(JsonObject arguments, TurnPlayer turnPlayer) {
+        return executeGuarded(arguments, turnPlayer, () -> true);
+    }
+
+    private CompletableFuture<ToolExecution> executeGuarded(
+            JsonObject arguments,
+            TurnPlayer turnPlayer,
+            BooleanSupplier ownerActive
+    ) {
+        return executeGuarded(arguments, turnPlayer, ownerActive, ignored -> { });
+    }
+
+    private CompletableFuture<ToolExecution> executeGuarded(
+            JsonObject arguments,
+            TurnPlayer turnPlayer,
+            BooleanSupplier ownerActive,
+            Consumer<Runnable> cancellationRegistrar
+    ) {
         Objects.requireNonNull(turnPlayer, "turnPlayer");
+        Objects.requireNonNull(ownerActive, "ownerActive");
+        Objects.requireNonNull(cancellationRegistrar, "cancellationRegistrar");
+        if (!ownerActive.getAsBoolean()) {
+            return cancelledExecution();
+        }
         long generationBefore = approvals.generation();
         CommandRules current;
         try {
@@ -115,7 +140,8 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
             return CompletableFuture.completedFuture(ToolExecution.completed(simple(
                     "denied", "configuration_changed", "command policy changed during request")));
         }
-        return executeAtGeneration(arguments, turnPlayer, current, generationAfter);
+        return executeAtGeneration(arguments, turnPlayer, current, generationAfter, ownerActive,
+                cancellationRegistrar);
     }
 
     /** Adapter for {@link ToolDispatcher}; policy still receives an explicit immutable {@link CommandRules}. */
@@ -124,18 +150,52 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
                                                     MineclawConfig config) {
         Objects.requireNonNull(turnPlayer, "turnPlayer");
         Objects.requireNonNull(config, "config");
-        return execute(arguments, new TurnPlayer(turnPlayer.id(), turnPlayer.name()));
+        return execute(arguments, new TurnPlayer(turnPlayer.id(), turnPlayer.name()), turnPlayer.commandRules());
+    }
+
+    @Override
+    public CompletableFuture<ToolExecution> executeGuarded(
+            JsonObject arguments,
+            ToolDispatcher.TurnPlayer turnPlayer,
+            MineclawConfig config,
+            BooleanSupplier ownerActive
+    ) {
+        Objects.requireNonNull(turnPlayer, "turnPlayer");
+        Objects.requireNonNull(config, "config");
+        return executeAtGeneration(arguments, new TurnPlayer(turnPlayer.id(), turnPlayer.name()),
+                turnPlayer.commandRules(), approvals.generation(), ownerActive, ignored -> { });
+    }
+
+    @Override
+    public CompletableFuture<ToolExecution> executeGuarded(
+            JsonObject arguments,
+            ToolDispatcher.TurnPlayer turnPlayer,
+            MineclawConfig config,
+            BooleanSupplier ownerActive,
+            Consumer<Runnable> cancellationRegistrar
+    ) {
+        Objects.requireNonNull(turnPlayer, "turnPlayer");
+        Objects.requireNonNull(config, "config");
+        return executeAtGeneration(arguments, new TurnPlayer(turnPlayer.id(), turnPlayer.name()),
+                turnPlayer.commandRules(), approvals.generation(), ownerActive, cancellationRegistrar);
     }
 
     CompletableFuture<ToolExecution> execute(
             JsonObject arguments, TurnPlayer turnPlayer, CommandRules current) {
-        return executeAtGeneration(arguments, turnPlayer, current, approvals.generation());
+        return executeAtGeneration(arguments, turnPlayer, current, approvals.generation(), () -> true,
+                ignored -> { });
     }
 
     private CompletableFuture<ToolExecution> executeAtGeneration(
-            JsonObject arguments, TurnPlayer turnPlayer, CommandRules current, long policyGeneration) {
+            JsonObject arguments, TurnPlayer turnPlayer, CommandRules current, long policyGeneration,
+            BooleanSupplier ownerActive, Consumer<Runnable> cancellationRegistrar) {
         Objects.requireNonNull(turnPlayer, "turnPlayer");
         Objects.requireNonNull(current, "current");
+        Objects.requireNonNull(ownerActive, "ownerActive");
+        Objects.requireNonNull(cancellationRegistrar, "cancellationRegistrar");
+        if (!ownerActive.getAsBoolean()) {
+            return cancelledExecution();
+        }
         CommandRequest request;
         try {
             request = CommandRequest.parse(arguments, limits);
@@ -152,9 +212,10 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
         }
 
         if (request.console()) {
-            return executeConsole(turnPlayer, request, current, policyGeneration);
+            return executeConsole(turnPlayer, request, current, policyGeneration, ownerActive);
         }
-        return executePlayer(turnPlayer, request, current, policyGeneration);
+        return executePlayer(turnPlayer, request, current, policyGeneration, ownerActive,
+                cancellationRegistrar);
     }
 
     public ApprovalManager.ApprovalOutcome approve(UUID playerId, String token) {
@@ -170,22 +231,33 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
         return approvals.reject(playerId, token);
     }
 
+    /** Shared command/script interaction registry used by command routing and runtime bridges. */
+    public InteractionManager interactions() {
+        return approvals.interactions();
+    }
+
     private CompletableFuture<ToolExecution> executeConsole(
-            TurnPlayer turnPlayer, CommandRequest request, CommandRules current, long policyGeneration) {
+            TurnPlayer turnPlayer, CommandRequest request, CommandRules current, long policyGeneration,
+            BooleanSupplier ownerActive) {
         if (!current.consoleAllowed(request)) {
             audit(turnPlayer, request, "console", "miss", "not-required", "denied");
             return CompletableFuture.completedFuture(ToolExecution.completed(result(
                     "denied", "whitelist_miss", "console command is not whitelisted", request, "console")));
         }
         audit(turnPlayer, request, "console", "matched", "not-required", "dispatching");
-        return stage(dispatchConsole(turnPlayer, request, policyGeneration)).thenApply(ToolExecution::completed);
+        return stage(dispatchConsole(turnPlayer, request, policyGeneration, ownerActive))
+                .thenApply(ToolExecution::completed);
     }
 
     private CompletableFuture<ToolExecution> executePlayer(
-            TurnPlayer turnPlayer, CommandRequest request, CommandRules current, long policyGeneration) {
+            TurnPlayer turnPlayer, CommandRequest request, CommandRules current, long policyGeneration,
+            BooleanSupplier ownerActive, Consumer<Runnable> cancellationRegistrar) {
         String identifier = request.player().orElseThrow();
         CompletableFuture<Optional<CommandRuntime.OnlinePlayer>> found = stage(runtime.findOnlinePlayer(identifier));
         return found.handle((target, error) -> {
+            if (!ownerActive.getAsBoolean()) {
+                return cancelledExecution();
+            }
             if (error != null) {
                 audit(turnPlayer, request, "player:" + identifier, "not-checked", "none", "terminal-error");
                 return CompletableFuture.completedFuture(ToolExecution.completed(result(
@@ -196,7 +268,8 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
                 return CompletableFuture.completedFuture(ToolExecution.completed(result(
                         "denied", "player_offline", "target player is not online", request, "player:" + identifier)));
             }
-            return resolvedPlayer(turnPlayer, request, current, target.orElseThrow(), policyGeneration);
+            return resolvedPlayer(turnPlayer, request, current, target.orElseThrow(), policyGeneration,
+                    ownerActive, cancellationRegistrar);
         }).thenCompose(stage -> stage);
     }
 
@@ -205,13 +278,18 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
             CommandRequest request,
             CommandRules current,
             CommandRuntime.OnlinePlayer target,
-            long policyGeneration
+            long policyGeneration,
+            BooleanSupplier ownerActive,
+            Consumer<Runnable> cancellationRegistrar
     ) {
+        if (!ownerActive.getAsBoolean()) {
+            return cancelledExecution();
+        }
         boolean samePlayer = turnPlayer.uuid().equals(target.uuid());
         if (samePlayer && current.playerAllowed(request)) {
             audit(turnPlayer, request, identity(target), "matched", "not-required", "dispatching");
             return stage(dispatchPlayer(turnPlayer, request, target, "matched", "not-required",
-                    policyGeneration, true))
+                    policyGeneration, true, ownerActive))
                     .thenApply(ToolExecution::completed);
         }
 
@@ -226,7 +304,7 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
         ApprovalManager.Registration registration = approvals.reserveAtGeneration(
                 target.uuid(), approvalToken, policyGeneration,
                 approvalGeneration -> approvedDispatch(
-                        turnPlayer, request, target, whitelist, approvalGeneration),
+                        turnPlayer, request, target, whitelist, approvalGeneration, ownerActive),
                 () -> approvalTimedOut(turnPlayer, request, target, whitelist),
                 () -> approvalRejected(turnPlayer, request, target, whitelist),
                 () -> audit(turnPlayer, request, identity(target), whitelist, "cancelled", "cancelled"));
@@ -237,6 +315,15 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
             audit(turnPlayer, request, identity(target), whitelist, "not-created", "denied");
             return CompletableFuture.completedFuture(ToolExecution.completed(rejection));
         }
+        cancellationRegistrar.accept(() -> registration.cancel(simple(
+                "cancelled", "invocation_cancelled", "native tool owner was cancelled")));
+        if (!ownerActive.getAsBoolean()) {
+            registration.cancel(simple("cancelled", "invocation_cancelled",
+                    "native tool owner was cancelled"));
+            ToolResult cancelled = registration.continuation().getNow(simple(
+                    "cancelled", "invocation_cancelled", "native tool owner was cancelled"));
+            return CompletableFuture.completedFuture(ToolExecution.completed(cancelled));
+        }
 
         Map<String, String> prompt = Map.of(
                 "command", request.command(),
@@ -244,7 +331,13 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
                 "player", target.name(),
                 "requester", turnPlayer.name(),
                 "token", approvalToken);
-        return stage(runtime.sendApprovalPrompt(target, prompt)).handle((sent, error) -> {
+        return stage(runtime.sendApprovalPromptGuarded(target, prompt, ownerActive)).handle((sent, error) -> {
+            if (!ownerActive.getAsBoolean()) {
+                registration.cancel(simple("cancelled", "invocation_cancelled",
+                        "native tool owner was cancelled"));
+                return ToolExecution.completed(registration.continuation().getNow(
+                        simple("cancelled", "invocation_cancelled", "native tool owner was cancelled")));
+            }
             if (error != null || !Boolean.TRUE.equals(sent)) {
                 ToolResult unavailable = result("denied", "player_offline",
                         "target player became unavailable or cannot approve before approval prompt",
@@ -267,7 +360,9 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
             }
             audit(turnPlayer, request, identity(target), whitelist, "pending", "pending-approval");
             return ToolExecution.pending(result("pending_approval", "approval_required",
-                    "target player approval is required", request, identity(target)), registration.continuation());
+                    "target player approval is required", request, identity(target)), registration.continuation(),
+                    () -> registration.cancel(ToolResult.simple(
+                            "cancelled", "command approval owner was cancelled")));
         });
     }
 
@@ -276,8 +371,13 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
             CommandRequest request,
             CommandRuntime.OnlinePlayer target,
             String whitelist,
-            long approvalGeneration
+            long approvalGeneration,
+            BooleanSupplier ownerActive
     ) {
+        if (!ownerActive.getAsBoolean()) {
+            return CompletableFuture.completedFuture(simple(
+                    "cancelled", "invocation_cancelled", "native tool owner was cancelled"));
+        }
         if (!commandRuntimeEnabled() || approvals.generation() != approvalGeneration) {
             audit(turnPlayer, request, identity(target), whitelist, "invalidated", "denied");
             return CompletableFuture.completedFuture(result("denied", "configuration_changed",
@@ -288,7 +388,7 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
         CompletionStage<Boolean> notice = runtime.send(target, "approve_started", Map.of());
         return stage(notice).handle((ignored, error) -> null)
                 .thenCompose(ignored -> dispatchPlayer(turnPlayer, request, target, whitelist, "approved",
-                        approvalGeneration, false));
+                        approvalGeneration, false, ownerActive));
     }
 
     private void approvalTimedOut(
@@ -312,15 +412,22 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
     }
 
     private CompletionStage<ToolResult> dispatchConsole(
-            TurnPlayer turnPlayer, CommandRequest request, long policyGeneration) {
+            TurnPlayer turnPlayer, CommandRequest request, long policyGeneration,
+            BooleanSupplier ownerActive) {
         return stage(runtime.executeConsoleGuarded(request.command(), () ->
-                approvals.generation() == policyGeneration && consoleStillAllowed(request)))
+                ownerActive.getAsBoolean() && approvals.generation() == policyGeneration
+                        && consoleStillAllowed(request)))
                 .handle((dispatch, error) -> {
             CommandDispatchResult observed = observed(dispatch, error);
             if (observed.outcome() == CommandDispatchResult.Outcome.PLAYER_DISPATCHED
                     || observed.outcome() == CommandDispatchResult.Outcome.PLAYER_OFFLINE) {
                 observed = CommandDispatchResult.resultUnknown(
                         "command runtime returned a player-only outcome for console dispatch");
+            }
+            if (observed.outcome() == CommandDispatchResult.Outcome.DISPATCH_REJECTED
+                    && !ownerActive.getAsBoolean()) {
+                audit(turnPlayer, request, "console", "matched", "not-required", "owner-cancelled");
+                return simple("cancelled", "invocation_cancelled", "native tool owner was cancelled");
             }
             if (observed.outcome() == CommandDispatchResult.Outcome.DISPATCH_REJECTED
                     && (approvals.generation() != policyGeneration || !consoleStillAllowed(request))) {
@@ -343,16 +450,22 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
             String whitelist,
             String approval,
             long policyGeneration,
-            boolean directWhitelist
+            boolean directWhitelist,
+            BooleanSupplier ownerActive
     ) {
         return stage(runtime.executePlayerGuarded(target, request.command(), () ->
-                approvals.generation() == policyGeneration
+                ownerActive.getAsBoolean() && approvals.generation() == policyGeneration
                         && (directWhitelist ? playerStillAllowed(request) : commandRuntimeEnabled())))
                 .handle((dispatch, error) -> {
             CommandDispatchResult observed = observed(dispatch, error);
             if (observed.outcome() == CommandDispatchResult.Outcome.CONSOLE_DISPATCHED) {
                 observed = CommandDispatchResult.resultUnknown(
                         "command runtime returned a console-only outcome for player dispatch");
+            }
+            if (observed.outcome() == CommandDispatchResult.Outcome.DISPATCH_REJECTED
+                    && !ownerActive.getAsBoolean()) {
+                audit(turnPlayer, request, identity(target), whitelist, approval, "owner-cancelled");
+                return simple("cancelled", "invocation_cancelled", "native tool owner was cancelled");
             }
             if (observed.outcome() == CommandDispatchResult.Outcome.DISPATCH_REJECTED
                     && (approvals.generation() != policyGeneration
@@ -507,6 +620,11 @@ public final class CommandExecutor implements ToolDispatcher.CommandTool {
         output.addProperty("error_code", errorCode);
         output.addProperty("message", message);
         return new ToolResult(status, output);
+    }
+
+    private static CompletableFuture<ToolExecution> cancelledExecution() {
+        return CompletableFuture.completedFuture(ToolExecution.completed(simple(
+                "cancelled", "invocation_cancelled", "native tool owner was cancelled")));
     }
 
     private static ToolResult result(String status, String code, String message,

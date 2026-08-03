@@ -6,6 +6,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * A credential-free request description. The API key is deliberately supplied separately to the client call so
@@ -13,19 +14,28 @@ import java.util.Objects;
  */
 public record ChatCompletionRequest(
         URI endpoint,
+        String modelReference,
         String model,
         String systemPrompt,
         List<ApiMessage> messages,
         List<JsonObject> tools,
         Duration timeout,
         int maxRetries,
-        Duration retryBackoff
+        Duration retryBackoff,
+        int maxOutputTokens,
+        JsonObject extraBody,
+        Optional<String> interleavedField,
+        Optional<String> promptCacheKey
 ) {
     public ChatCompletionRequest {
         Objects.requireNonNull(endpoint, "endpoint");
+        Objects.requireNonNull(modelReference, "modelReference");
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(timeout, "timeout");
         Objects.requireNonNull(retryBackoff, "retryBackoff");
+        Objects.requireNonNull(extraBody, "extraBody");
+        Objects.requireNonNull(interleavedField, "interleavedField");
+        Objects.requireNonNull(promptCacheKey, "promptCacheKey");
         if (!endpoint.isAbsolute()
                 || !("http".equalsIgnoreCase(endpoint.getScheme())
                 || "https".equalsIgnoreCase(endpoint.getScheme()))
@@ -42,9 +52,13 @@ public record ChatCompletionRequest(
         if (maxRetries < 0) {
             throw new IllegalArgumentException("maxRetries must not be negative");
         }
+        if (maxOutputTokens < 0) {
+            throw new IllegalArgumentException("maxOutputTokens must not be negative");
+        }
         if (retryBackoff.isNegative()) {
             throw new IllegalArgumentException("retryBackoff must not be negative");
         }
+        promptCacheKey.ifPresent(ChatCompletionRequest::validatePromptCacheKey);
         try {
             timeout.toNanos();
             retryBackoff.toNanos();
@@ -56,5 +70,43 @@ public record ChatCompletionRequest(
         tools = tools == null ? List.of() : tools.stream()
                 .map(tool -> Objects.requireNonNull(tool, "tool").deepCopy())
                 .toList();
+        extraBody = extraBody.deepCopy();
+    }
+
+    public ChatCompletionRequest(URI endpoint, String modelReference, String model,
+                                 String systemPrompt, List<ApiMessage> messages,
+                                 List<JsonObject> tools, Duration timeout, int maxRetries,
+                                 Duration retryBackoff, int maxOutputTokens,
+                                 JsonObject extraBody, Optional<String> interleavedField) {
+        this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
+                maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
+                Optional.empty());
+    }
+
+    public ChatCompletionRequest(URI endpoint, String model, String systemPrompt,
+                                 List<ApiMessage> messages, List<JsonObject> tools,
+                                 Duration timeout, int maxRetries, Duration retryBackoff) {
+        this(endpoint, model, model, systemPrompt, messages, tools, timeout, maxRetries, retryBackoff,
+                0, new JsonObject(), Optional.empty(), Optional.empty());
+    }
+
+    @Override
+    public JsonObject extraBody() {
+        return extraBody.deepCopy();
+    }
+
+    private static void validatePromptCacheKey(String value) {
+        String prefix = "mineclaw:";
+        if (!value.startsWith(prefix)) {
+            throw new IllegalArgumentException("promptCacheKey must use the mineclaw UUID namespace");
+        }
+        String uuid = value.substring(prefix.length());
+        try {
+            if (!java.util.UUID.fromString(uuid).toString().equals(uuid)) {
+                throw new IllegalArgumentException("promptCacheKey must contain a canonical UUID");
+            }
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("promptCacheKey must contain a canonical UUID", exception);
+        }
     }
 }

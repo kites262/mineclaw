@@ -1,6 +1,7 @@
 package cc.kites.mineclaw.support;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
@@ -30,18 +31,20 @@ class SafeMarkdownTest {
     }
 
     @Test
-    void keepsMiniMessageLookingModelTextLiteralAndNonInteractive() {
+    void rendersMiniMessageColorsButKeepsOtherTagsLiteralAndNonInteractive() {
         Component safeReply = SafeMarkdown.render(
-                "<red>literal</red> **safe** <click:run_command:'/op someone'>click</click>");
+                "<red>named</red> <#12abef>hex</#12abef> **safe** "
+                        + "<click:run_command:'/op someone'>click</click>");
         Component rendered = MiniMessage.miniMessage().deserialize("<reply>",
                 Placeholder.component("reply", safeReply));
 
         assertThat(PLAIN.serialize(rendered)).isEqualTo(
-                "<red>literal</red> safe <click:run_command:'/op someone'>click</click>");
-        assertThat(descendants(rendered)).allSatisfy(child -> {
-            assertThat(child.clickEvent()).isNull();
-            assertThat(child.color()).isNull();
-        });
+                "named hex safe <click:run_command:'/op someone'>click</click>");
+        assertThat(descendants(rendered)).allSatisfy(child -> assertThat(child.clickEvent()).isNull());
+        assertThat(descendants(rendered)).anySatisfy(child ->
+                assertThat(child.color()).isEqualTo(TextColor.color(0xff5555)));
+        assertThat(descendants(rendered)).anySatisfy(child ->
+                assertThat(child.color()).isEqualTo(TextColor.color(0x12abef)));
     }
 
     @Test

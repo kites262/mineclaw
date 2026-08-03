@@ -7,10 +7,17 @@ public record ChatCompletionResult(
         String content,
         List<ToolCall> toolCalls,
         String finishReason,
-        ApiUsage usage
+        ApiUsage usage,
+        String interleavedValue
 ) {
     public ChatCompletionResult {
         content = content == null ? "" : content;
         toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
+        interleavedValue = interleavedValue == null ? "" : interleavedValue;
+    }
+
+    public ChatCompletionResult(String content, List<ToolCall> toolCalls,
+                                String finishReason, ApiUsage usage) {
+        this(content, toolCalls, finishReason, usage, "");
     }
 }

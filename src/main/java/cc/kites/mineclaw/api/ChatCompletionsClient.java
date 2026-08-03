@@ -21,6 +21,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -28,7 +29,8 @@ import java.util.function.Consumer;
 /** Asynchronous OpenAI-compatible Chat Completions streaming client. */
 public final class ChatCompletionsClient {
     private static final Gson GSON = new Gson();
-    private static final int MAX_ERROR_BODY_BYTES = 64 * 1024;
+    private static final int MAX_ERROR_BODY_BYTES = 16 * 1024;
+    private static final Duration MAX_RETRY_BACKOFF = Duration.ofSeconds(60);
 
     private final HttpClient httpClient;
 
@@ -43,7 +45,7 @@ public final class ChatCompletionsClient {
 
     /**
      * Executes an initial request plus at most {@link ChatCompletionRequest#maxRetries()} retries. The API key is
-     * only placed in the HTTP Authorization header and is never included in an exception or log message.
+     * only placed in the provider's authentication header and is never included in an exception or log message.
      */
     public CompletableFuture<ChatCompletionResult> complete(
             ChatCompletionRequest request,
@@ -75,35 +77,51 @@ public final class ChatCompletionsClient {
         CompletableFuture<HttpResponse<Flow.Publisher<List<ByteBuffer>>>> responseFuture = httpClient.sendAsync(
                 httpRequest, HttpResponse.BodyHandlers.ofPublisher());
         CompletableFuture<ChatCompletionResult> pipeline = responseFuture.thenCompose(response ->
-                consumeResponse(response, deltaConsumer, subscription));
+                consumeResponse(response, deltaConsumer, subscription, request.interleavedField()));
         return withTimeout(pipeline, responseFuture, subscription, request.timeout());
     }
 
     private static CompletableFuture<ChatCompletionResult> consumeResponse(
             HttpResponse<Flow.Publisher<List<ByteBuffer>>> response,
             Consumer<String> deltaConsumer,
-            AtomicReference<Flow.Subscription> subscription
+            AtomicReference<Flow.Subscription> subscription,
+            java.util.Optional<String> interleavedField
     ) {
         int statusCode = response.statusCode();
         if (statusCode >= 200 && statusCode < 300) {
-            ChatResponseParser parser = new ChatResponseParser(deltaConsumer);
+            ChatResponseParser parser = new ChatResponseParser(deltaConsumer, interleavedField);
             BodySubscriber subscriber = new BodySubscriber(subscription, parser::accept);
             response.body().subscribe(subscriber);
             return subscriber.body().thenApply(ignored -> parser.finish());
         }
 
         ByteArrayOutputStream errorBody = new ByteArrayOutputStream();
+        AtomicBoolean errorBodyTruncated = new AtomicBoolean();
         BodySubscriber subscriber = new BodySubscriber(subscription, bytes -> {
             ByteBuffer copy = bytes.slice();
             int remainingCapacity = Math.max(0, MAX_ERROR_BODY_BYTES - errorBody.size());
             byte[] chunk = new byte[Math.min(copy.remaining(), remainingCapacity)];
             copy.get(chunk);
             errorBody.writeBytes(chunk);
+            if (copy.hasRemaining()) {
+                errorBodyTruncated.set(true);
+            }
         });
         response.body().subscribe(subscriber);
         return subscriber.body().thenCompose(ignored -> CompletableFuture.failedFuture(
                 ChatResponseParser.errorResponse(statusCode,
-                        errorBody.toString(StandardCharsets.UTF_8))));
+                        errorBody.toString(StandardCharsets.UTF_8), requestId(response),
+                        errorBodyTruncated.get())));
+    }
+
+    private static String requestId(HttpResponse<?> response) {
+        for (String header : List.of("x-request-id", "request-id", "x-trace-id")) {
+            var value = response.headers().firstValue(header);
+            if (value.isPresent()) {
+                return value.orElseThrow();
+            }
+        }
+        return "";
     }
 
     private static CompletableFuture<ChatCompletionResult> withTimeout(
@@ -138,7 +156,11 @@ public final class ChatCompletionsClient {
     private static String requestBody(ChatCompletionRequest request) {
         JsonObject root = new JsonObject();
         root.addProperty("model", request.model());
+        request.promptCacheKey().ifPresent(value -> root.addProperty("prompt_cache_key", value));
         root.addProperty("stream", true);
+        if (request.maxOutputTokens() > 0) {
+            root.addProperty("max_completion_tokens", request.maxOutputTokens());
+        }
         JsonObject streamOptions = new JsonObject();
         streamOptions.addProperty("include_usage", true);
         root.add("stream_options", streamOptions);
@@ -156,6 +178,7 @@ public final class ChatCompletionsClient {
             request.tools().forEach(tool -> tools.add(tool.deepCopy()));
             root.add("tools", tools);
         }
+        request.extraBody().entrySet().forEach(entry -> root.add(entry.getKey(), entry.getValue().deepCopy()));
         return GSON.toJson(root);
     }
 
@@ -175,6 +198,7 @@ public final class ChatCompletionsClient {
         if (message.toolCallId() != null) {
             result.addProperty("tool_call_id", message.toolCallId());
         }
+        message.providerFields().forEach(result::addProperty);
         return result;
     }
 
@@ -190,8 +214,7 @@ public final class ChatCompletionsClient {
     }
 
     static boolean isRetryableStatus(int statusCode) {
-        return statusCode == 408 || statusCode == 409 || statusCode == 425 || statusCode == 429
-                || statusCode >= 500;
+        return statusCode == 408 || statusCode == 429 || statusCode >= 500;
     }
 
     private static boolean isRetryable(Throwable failure) {
@@ -225,11 +248,16 @@ public final class ChatCompletionsClient {
             return initial;
         }
         long multiplier = completedRetries >= 62 ? Long.MAX_VALUE : 1L << completedRetries;
+        Duration uncapped;
         try {
-            return initial.multipliedBy(multiplier);
+            uncapped = initial.multipliedBy(multiplier);
         } catch (ArithmeticException exception) {
-            return Duration.ofNanos(Long.MAX_VALUE);
+            uncapped = MAX_RETRY_BACKOFF;
         }
+        Duration capped = uncapped.compareTo(MAX_RETRY_BACKOFF) > 0 ? MAX_RETRY_BACKOFF : uncapped;
+        double jitter = ThreadLocalRandom.current().nextDouble(0.75d, 1.25d);
+        long nanos = Math.max(1L, (long) (capped.toNanos() * jitter));
+        return Duration.ofNanos(Math.min(nanos, MAX_RETRY_BACKOFF.toNanos()));
     }
 
     private static CompletableFuture<Void> delay(Duration duration) {
@@ -310,7 +338,13 @@ public final class ChatCompletionsClient {
                     return;
                 }
                 Throwable cause = unwrap(failure);
-                if (attemptNumber < request.maxRetries() && isRetryable(cause)) {
+                boolean willRetry = attemptNumber < request.maxRetries() && isRetryable(cause);
+                try {
+                    observer.onAttemptFailure(attemptNumber + 1, normalizeFailure(cause), willRetry);
+                } catch (RuntimeException ignored) {
+                    // Diagnostics must never change retry or completion semantics.
+                }
+                if (willRetry) {
                     if (emittedDelta.get()) {
                         try {
                             observer.onReset();
@@ -348,6 +382,8 @@ public final class ChatCompletionsClient {
         void onDelta(String delta);
 
         void onReset();
+
+        default void onAttemptFailure(int attempt, Throwable failure, boolean willRetry) { }
     }
 
     private static final class BodySubscriber implements Flow.Subscriber<List<ByteBuffer>> {

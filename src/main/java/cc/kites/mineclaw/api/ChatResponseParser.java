@@ -14,6 +14,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Consumer;
@@ -22,10 +23,12 @@ import java.util.function.Consumer;
 final class ChatResponseParser {
     private static final int MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private final Consumer<String> deltaConsumer;
+    private final Optional<String> interleavedField;
     private final ByteArrayOutputStream raw = new ByteArrayOutputStream();
     private final ByteArrayOutputStream line = new ByteArrayOutputStream();
     private final StringBuilder eventData = new StringBuilder();
     private final StringBuilder content = new StringBuilder();
+    private final StringBuilder interleaved = new StringBuilder();
     private final Map<Integer, MutableToolCall> toolCalls = new TreeMap<>();
     private boolean sseSeen;
     private boolean done;
@@ -35,7 +38,12 @@ final class ChatResponseParser {
     private int receivedBytes;
 
     ChatResponseParser(Consumer<String> deltaConsumer) {
+        this(deltaConsumer, Optional.empty());
+    }
+
+    ChatResponseParser(Consumer<String> deltaConsumer, Optional<String> interleavedField) {
         this.deltaConsumer = Objects.requireNonNull(deltaConsumer, "deltaConsumer");
+        this.interleavedField = Objects.requireNonNull(interleavedField, "interleavedField");
     }
 
     void accept(ByteBuffer source) {
@@ -154,6 +162,12 @@ final class ChatResponseParser {
     }
 
     private void appendDelta(JsonObject delta) {
+        interleavedField.ifPresent(field -> {
+            String value = nullableString(delta, field);
+            if (value != null) {
+                interleaved.append(value);
+            }
+        });
         String text = nullableString(delta, "content");
         if (text != null && !text.isEmpty()) {
             content.append(text);
@@ -183,10 +197,11 @@ final class ChatResponseParser {
 
     private ChatCompletionResult streamedResult() {
         List<ToolCall> calls = toolCalls.values().stream().map(MutableToolCall::toToolCall).toList();
-        return new ChatCompletionResult(content.toString(), validateToolCalls(calls), finishReason, usage);
+        return new ChatCompletionResult(content.toString(), validateToolCalls(calls), finishReason, usage,
+                interleaved.toString());
     }
 
-    private static ChatCompletionResult parseOrdinaryJson(String body) {
+    private ChatCompletionResult parseOrdinaryJson(String body) {
         JsonObject root;
         try {
             root = JsonParser.parseString(body).getAsJsonObject();
@@ -218,8 +233,9 @@ final class ChatResponseParser {
                         function == null ? "" : string(function, "arguments")));
             }
         }
+        String interleavedValue = interleavedField.map(field -> nullableString(message, field)).orElse(null);
         return new ChatCompletionResult(content, validateToolCalls(calls), nullableString(choice, "finish_reason"),
-                parseUsage(root, null));
+                parseUsage(root, null), interleavedValue);
     }
 
     /** Rejects incomplete identities only once all streamed fragments have been assembled. */
@@ -240,6 +256,15 @@ final class ChatResponseParser {
     }
 
     static ChatCompletionException errorResponse(int statusCode, String body) {
+        return errorResponse(statusCode, body, "");
+    }
+
+    static ChatCompletionException errorResponse(int statusCode, String body, String requestId) {
+        return errorResponse(statusCode, body, requestId, false);
+    }
+
+    static ChatCompletionException errorResponse(int statusCode, String body, String requestId,
+                                                   boolean bodyTruncated) {
         JsonObject root = null;
         try {
             JsonElement parsed = JsonParser.parseString(body);
@@ -249,18 +274,27 @@ final class ChatResponseParser {
         } catch (JsonParseException ignored) {
             // A status and a sanitized generic message are sufficient for malformed error bodies.
         }
-        boolean retryable = ChatCompletionsClient.isRetryableStatus(statusCode)
-                || (root != null && isRecoverableError(root));
+        boolean retryable = ChatCompletionsClient.isRetryableStatus(statusCode);
+        JsonObject error = root == null ? null : object(root, "error");
         return new ChatCompletionException("Chat Completions request failed with HTTP " + statusCode,
-                statusCode, retryable);
+                statusCode, retryable, oneLine(requestId, 512),
+                oneLine(error == null ? "" : string(error, "code"), 512),
+                oneLine(error == null ? "" : string(error, "type"), 512),
+                oneLine(error == null ? "" : string(error, "param"), 512),
+                oneLine(error == null ? "" : string(error, "message"), 4_096),
+                sanitizedBody(root, bodyTruncated));
     }
 
     private static void throwIfError(JsonObject root, int statusCode) {
-        if (!root.has("error") || !root.get("error").isJsonObject()) {
+        JsonObject error = object(root, "error");
+        if (error == null) {
             return;
         }
         boolean retryable = isRecoverableError(root);
-        throw new ChatCompletionException("Chat Completions endpoint returned an error", statusCode, retryable);
+        throw new ChatCompletionException("Chat Completions endpoint returned an error", statusCode, retryable,
+                "", oneLine(string(error, "code"), 512), oneLine(string(error, "type"), 512),
+                oneLine(string(error, "param"), 512), oneLine(string(error, "message"), 4_096),
+                sanitizedBody(root, false));
     }
 
     private static boolean isRecoverableError(JsonObject root) {
@@ -282,6 +316,51 @@ final class ChatResponseParser {
                 || value.contains("timeout")
                 || value.contains("temporarily_unavailable")
                 || value.contains("service_unavailable");
+    }
+
+    private static String sanitizedBody(JsonObject root, boolean sourceTruncated) {
+        String marker = sourceTruncated ? "<truncated>" : "";
+        if (root == null) {
+            return "<unparseable error body omitted>" + marker;
+        }
+        JsonObject copy = root.deepCopy();
+        redact(copy);
+        int contentLimit = 16 * 1024 - marker.length();
+        return oneLine(copy.toString(), contentLimit) + marker;
+    }
+
+    private static void redact(JsonElement value) {
+        if (value == null || value.isJsonNull() || value.isJsonPrimitive()) {
+            return;
+        }
+        if (value.isJsonArray()) {
+            value.getAsJsonArray().forEach(ChatResponseParser::redact);
+            return;
+        }
+        JsonObject object = value.getAsJsonObject();
+        for (String key : new ArrayList<>(object.keySet())) {
+            String normalized = key.toLowerCase(java.util.Locale.ROOT);
+            if (normalized.equals("api_key") || normalized.equals("authorization")
+                    || normalized.equals("cookie") || normalized.equals("messages")
+                    || normalized.equals("tools") || normalized.equals("arguments")
+                    || normalized.contains("reasoning")) {
+                object.addProperty(key, "<redacted>");
+            } else {
+                redact(object.get(key));
+            }
+        }
+    }
+
+    private static String oneLine(String value, int maximum) {
+        String normalized = value == null ? "" : value.replace('\r', ' ').replace('\n', ' ')
+                .codePoints().map(codePoint -> Character.isISOControl(codePoint) ? ' ' : codePoint)
+                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+                .toString();
+        if (normalized.length() <= maximum) {
+            return normalized;
+        }
+        String marker = "<truncated>";
+        return normalized.substring(0, Math.max(0, maximum - marker.length())) + marker;
     }
 
     private static ApiUsage parseUsage(JsonObject root, ApiUsage fallback) {

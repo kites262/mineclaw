@@ -1,43 +1,48 @@
 package cc.kites.mineclaw.approval;
 
+import cc.kites.mineclaw.interaction.InteractionManager;
 import cc.kites.mineclaw.support.FoliaTasks;
 import cc.kites.mineclaw.tool.ToolResult;
-
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import com.google.gson.JsonObject;
 
 import java.time.Duration;
 import java.util.Objects;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongFunction;
-import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-/** Thread-safe one-shot approval registry. A player may have at most one pending approval. */
+/**
+ * Compatibility facade for the original command-approval API. All registrations live in the
+ * shared generic {@link InteractionManager}, so command approvals and scripted interactions obey
+ * the same per-player, generation, token, and cancellation rules.
+ */
 public final class ApprovalManager {
-    public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
+    public static final Duration DEFAULT_TIMEOUT = InteractionManager.DEFAULT_TIMEOUT;
+    private static final InteractionManager.Confirm COMMAND_CONFIRM = new InteractionManager.Confirm(
+            "Command approval", "Allow Mineclaw to dispatch the pending command?");
 
-    private final TimeoutScheduler scheduler;
-    private final ConcurrentMap<UUID, Pending> pending = new ConcurrentHashMap<>();
-    private final Object lifecycleLock = new Object();
-    private final AtomicBoolean accepting = new AtomicBoolean(true);
-    private final AtomicLong generation = new AtomicLong();
+    private final InteractionManager interactions;
 
     public ApprovalManager(FoliaTasks tasks) {
-        this(foliaScheduler(tasks));
+        this(new InteractionManager(Objects.requireNonNull(tasks, "tasks")));
     }
 
     public ApprovalManager(TimeoutScheduler scheduler) {
-        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
+        this(new InteractionManager((delay, action) -> {
+            Cancellable cancellable = Objects.requireNonNull(scheduler, "scheduler").schedule(delay, action);
+            return Objects.requireNonNull(cancellable, "cancellable")::cancel;
+        }));
+    }
+
+    public ApprovalManager(InteractionManager interactions) {
+        this.interactions = Objects.requireNonNull(interactions, "interactions");
+    }
+
+    /** Generic manager used by JavaScript workflows and interaction command routing. */
+    public InteractionManager interactions() {
+        return interactions;
     }
 
     public Registration request(
@@ -63,10 +68,6 @@ public final class ApprovalManager {
                 ignored -> approvedAction.get(), timedOut, cancelled);
     }
 
-    /**
-     * Registers an approval and passes the lifecycle generation captured atomically with insertion
-     * to the approved action. This closes the reload-between-token-and-registration race.
-     */
     public Registration requestWithGeneration(
             UUID playerId,
             String token,
@@ -74,8 +75,8 @@ public final class ApprovalManager {
             Runnable timedOut,
             Runnable cancelled
     ) {
-        return activate(register(playerId, token, DEFAULT_TIMEOUT, null,
-                approvedAction, timedOut, cancelled, cancelled));
+        return activate(register(playerId, token, DEFAULT_TIMEOUT,
+                InteractionManager.CURRENT_GENERATION, approvedAction, timedOut, cancelled, cancelled));
     }
 
     public Registration requestWithGeneration(
@@ -86,11 +87,10 @@ public final class ApprovalManager {
             Runnable timedOut,
             Runnable cancelled
     ) {
-        return activate(register(playerId, token, timeout, null,
-                approvedAction, timedOut, cancelled, cancelled));
+        return activate(register(playerId, token, timeout,
+                InteractionManager.CURRENT_GENERATION, approvedAction, timedOut, cancelled, cancelled));
     }
 
-    /** Registers only if no lifecycle/config change occurred since the private prompt began. */
     public Registration requestAtGeneration(
             UUID playerId,
             String token,
@@ -103,7 +103,6 @@ public final class ApprovalManager {
                 timedOut, cancelled, cancelled);
     }
 
-    /** Registers with distinct callbacks for an explicit player rejection and lifecycle cancellation. */
     public Registration requestAtGeneration(
             UUID playerId,
             String token,
@@ -113,18 +112,11 @@ public final class ApprovalManager {
             Runnable rejected,
             Runnable cancelled
     ) {
-        if (expectedGeneration < 0L) {
-            throw new IllegalArgumentException("expected generation must not be negative");
-        }
+        requireGeneration(expectedGeneration);
         return activate(register(playerId, token, DEFAULT_TIMEOUT, expectedGeneration,
                 approvedAction, timedOut, rejected, cancelled));
     }
 
-    /**
-     * Reserves an exact player/token request without starting its timeout. The caller must send the
-     * private prompt and then invoke {@link Registration#activate()}, or abort this exact handle if
-     * prompt delivery fails.
-     */
     public Registration reserveAtGeneration(
             UUID playerId,
             String token,
@@ -134,9 +126,7 @@ public final class ApprovalManager {
             Runnable rejected,
             Runnable cancelled
     ) {
-        if (expectedGeneration < 0L) {
-            throw new IllegalArgumentException("expected generation must not be negative");
-        }
+        requireGeneration(expectedGeneration);
         return register(playerId, token, DEFAULT_TIMEOUT, expectedGeneration,
                 approvedAction, timedOut, rejected, cancelled);
     }
@@ -145,254 +135,199 @@ public final class ApprovalManager {
             UUID playerId,
             String token,
             Duration timeout,
-            Long expectedGeneration,
+            long expectedGeneration,
             LongFunction<? extends CompletionStage<ToolResult>> approvedAction,
             Runnable timedOut,
             Runnable rejected,
             Runnable cancelled
     ) {
         Objects.requireNonNull(playerId, "playerId");
-        token = requireToken(token);
         Objects.requireNonNull(timeout, "timeout");
         Objects.requireNonNull(approvedAction, "approvedAction");
         Objects.requireNonNull(timedOut, "timedOut");
         Objects.requireNonNull(rejected, "rejected");
         Objects.requireNonNull(cancelled, "cancelled");
-        if (timeout.isNegative() || timeout.isZero()) {
-            throw new IllegalArgumentException("approval timeout must be positive");
+
+        String scopeId = "command:" + token;
+        InteractionManager.Request request = new InteractionManager.Request(
+                playerId, "Player", token, scopeId, token, COMMAND_CONFIRM, timeout, expectedGeneration);
+        InteractionManager.Registration generic = interactions.reserve(request);
+        if (!generic.accepted()) {
+            return Registration.rejected(legacyRejection(generic.result().join()));
         }
 
-        Pending candidate;
-        synchronized (lifecycleLock) {
-            if (!accepting.get()) {
-                return Registration.rejected(disabledResult());
+        CompletableFuture<ToolResult> continuation = new CompletableFuture<>();
+        generic.result().whenComplete((decision, failure) -> {
+            if (failure != null) {
+                runSafely(cancelled);
+                continuation.complete(simple("terminal_error", "interaction_failure", safeMessage(failure)));
+                return;
             }
-            long requestGeneration = generation.get();
-            if (expectedGeneration != null && expectedGeneration != requestGeneration) {
-                return Registration.rejected(ToolResult.simple(
-                        "denied", "configuration changed before command approval registration"));
+            switch (decision.status()) {
+                case APPROVED -> runApproved(approvedAction, generic.generation(), continuation);
+                case REJECTED -> {
+                    runSafely(rejected);
+                    continuation.complete(ToolResult.simple(
+                            "denied", "target player explicitly rejected command approval"));
+                }
+                case TIMEOUT -> {
+                    runSafely(timedOut);
+                    continuation.complete(ToolResult.simple("timeout", "command approval timed out"));
+                }
+                case PLAYER_OFFLINE -> {
+                    runSafely(cancelled);
+                    continuation.complete(simple("denied", "player_offline",
+                            "target player went offline during command approval"));
+                }
+                case BUSY -> continuation.complete(ToolResult.simple(
+                        "denied", "player already has a pending approval"));
+                case DENIED, INVALID -> {
+                    runSafely(cancelled);
+                    continuation.complete(simple(decision.status().wireName(), decision.errorCode(),
+                            decision.message()));
+                }
+                case CANCELLED -> {
+                    runSafely(cancelled);
+                    continuation.complete(cancelledResult(decision));
+                }
             }
-            candidate = new Pending(playerId, token, requestGeneration, timeout,
-                    () -> approvedAction.apply(requestGeneration), timedOut, rejected, cancelled);
-            Pending existing = pending.putIfAbsent(playerId, candidate);
-            if (existing != null) {
-                return Registration.rejected(ToolResult.simple("denied", "player already has a pending approval"));
-            }
-        }
-
-        return new Registration(true, candidate.continuation, this, candidate);
+        });
+        return new Registration(true, continuation, generic);
     }
 
     private Registration activate(Registration registration) {
         if (!registration.accepted() || registration.activate()) {
             return registration;
         }
-        return new Registration(false, registration.continuation(), this, registration.pending);
+        return new Registration(false, registration.continuation(), registration.generic);
     }
 
-    private boolean activate(Pending value) {
-        synchronized (lifecycleLock) {
-            if (!accepting.get() || pending.get(value.playerId) != value
-                    || value.generation != generation.get()
-                    || !value.transition(State.RESERVED, State.WAITING)) {
-                return false;
-            }
-        }
-        try {
-            Cancellable timeoutTask = scheduler.schedule(value.timeoutDelay, () -> timeout(value));
-            value.installTimeout(Objects.requireNonNull(timeoutTask, "timeoutTask"));
-            return true;
-        } catch (RuntimeException exception) {
-            cancelExact(value, State.WAITING,
-                    ToolResult.simple("terminal_error", safeMessage(exception)));
-            return false;
-        }
-    }
-
-    private boolean abort(Pending value, ToolResult result) {
-        return cancelExact(value, State.RESERVED, result);
-    }
-
-    private boolean cancelExact(Pending value, State expected, ToolResult result) {
-        Objects.requireNonNull(result, "result");
-        synchronized (lifecycleLock) {
-            if (pending.get(value.playerId) != value || !value.transition(expected, State.CANCELLED)) {
-                return false;
-            }
-            pending.remove(value.playerId, value);
-        }
-        value.cancelTimeout();
-        value.runSafely(value.cancelled);
-        value.continuation.complete(result);
-        return true;
-    }
-
-    /** Atomically consumes a player's approval. Concurrent or repeated calls cannot run it twice. */
     public ApprovalOutcome approve(UUID playerId, String token) {
-        Objects.requireNonNull(playerId, "playerId");
-        Objects.requireNonNull(token, "token");
-        return approveMatching(playerId, value -> value.token.equals(token));
+        return outcome(interactions.approve(playerId, token));
     }
 
-    /**
-     * Accepts the currently displayed request for a trusted player gesture. Callers must establish
-     * the acting player's identity and approval permission before invoking this tokenless path.
-     */
+    /** Trusted gesture path; select interactions are deliberately ineligible. */
     public ApprovalOutcome approveCurrent(UUID playerId) {
-        Objects.requireNonNull(playerId, "playerId");
-        return approveMatching(playerId, ignored -> true);
+        return outcome(interactions.approveCurrentConfirm(playerId));
     }
 
-    private ApprovalOutcome approveMatching(UUID playerId, Predicate<Pending> matches) {
-        Pending value;
-        synchronized (lifecycleLock) {
-            value = pending.get(playerId);
-            if (value == null || !matches.test(value) || value.generation != generation.get()
-                    || !value.transition(State.WAITING, State.APPROVED)) {
-                return ApprovalOutcome.NONE;
-            }
-            pending.remove(playerId, value);
-        }
-        value.cancelTimeout();
-        value.runApproved();
-        return ApprovalOutcome.STARTED;
-    }
-
-    /** Atomically rejects and consumes a player's request without running the approved action. */
     public ApprovalOutcome reject(UUID playerId, String token) {
-        Objects.requireNonNull(playerId, "playerId");
-        Objects.requireNonNull(token, "token");
-        Pending value;
-        synchronized (lifecycleLock) {
-            value = pending.get(playerId);
-            if (value == null || !value.token.equals(token) || value.generation != generation.get()
-                    || !value.transition(State.WAITING, State.REJECTED)) {
-                return ApprovalOutcome.NONE;
-            }
-            pending.remove(playerId, value);
-        }
-        value.cancelTimeout();
-        value.runSafely(value.rejected);
-        value.continuation.complete(ToolResult.simple(
-                "denied", "target player explicitly rejected command approval"));
-        return ApprovalOutcome.REJECTED;
+        InteractionManager.Outcome result = interactions.reject(playerId, token);
+        return result == InteractionManager.Outcome.REJECTED ? ApprovalOutcome.REJECTED : ApprovalOutcome.NONE;
     }
 
-    /** Withdraws one pending request, completing its continuation with the supplied terminal result. */
+    /** Completes a player's pending command or scripted interaction as offline. */
+    public boolean playerOffline(UUID playerId) {
+        return interactions.playerOffline(playerId);
+    }
+
+    /** Withdraws the exact current player request for legacy callers. */
     public boolean cancel(UUID playerId, ToolResult result) {
         Objects.requireNonNull(playerId, "playerId");
         Objects.requireNonNull(result, "result");
-        Pending value;
-        synchronized (lifecycleLock) {
-            value = pending.get(playerId);
-            if (value == null || !value.transitionPending(State.CANCELLED)) {
-                return false;
-            }
-            pending.remove(playerId, value);
-        }
-        value.cancelTimeout();
-        value.runSafely(value.cancelled);
-        value.continuation.complete(result);
-        return true;
+        return interactions.cancelCurrent(playerId, adapt(result, "approval_cancelled"));
     }
 
-    /** Permanently closes this manager and terminally completes every pending continuation. */
     public void cancelAll() {
-        List<Pending> invalidated;
-        synchronized (lifecycleLock) {
-            accepting.set(false);
-            invalidated = detachPending();
-        }
-        completeInvalidated(invalidated, ToolResult.simple("terminal_error",
-                "plugin disabled while command approval was pending"));
+        interactions.close();
     }
 
-    /** Invalidates requests created under an older config while keeping the manager open. */
     public void invalidatePending() {
-        List<Pending> invalidated;
-        synchronized (lifecycleLock) {
-            invalidated = detachPending();
-        }
-        completeInvalidated(invalidated,
-                ToolResult.simple("denied", "configuration changed during command approval"));
-    }
-
-    private List<Pending> detachPending() {
-        generation.incrementAndGet();
-        ArrayList<Pending> invalidated = new ArrayList<>();
-        pending.forEach((playerId, value) -> {
-            if (value.transitionPending(State.CANCELLED)) {
-                pending.remove(playerId, value);
-                invalidated.add(value);
-            }
-        });
-        return invalidated;
-    }
-
-    private static void completeInvalidated(List<Pending> invalidated, ToolResult result) {
-        invalidated.forEach(value -> {
-            value.cancelTimeout();
-            value.runSafely(value.cancelled);
-            value.continuation.complete(result);
-        });
+        interactions.invalidatePending();
     }
 
     public long generation() {
-        return generation.get();
+        return interactions.generation();
     }
 
     public boolean isAccepting() {
-        return accepting.get();
+        return interactions.isAccepting();
     }
 
     public boolean hasPending(UUID playerId) {
-        return pending.containsKey(Objects.requireNonNull(playerId, "playerId"));
+        return interactions.hasPending(playerId);
     }
 
     public int pendingCount() {
-        return pending.size();
+        return interactions.pendingCount();
     }
 
-    private void timeout(Pending value) {
-        synchronized (lifecycleLock) {
-            if (pending.get(value.playerId) != value
-                    || value.generation != generation.get()
-                    || !value.transition(State.WAITING, State.TIMED_OUT)) {
-                return;
-            }
-            pending.remove(value.playerId, value);
+    private static void runApproved(LongFunction<? extends CompletionStage<ToolResult>> action,
+                                    long generation, CompletableFuture<ToolResult> continuation) {
+        CompletionStage<ToolResult> result;
+        try {
+            result = Objects.requireNonNull(action.apply(generation), "approved action result");
+        } catch (RuntimeException exception) {
+            continuation.complete(simple("terminal_error", "approved_action_failed", safeMessage(exception)));
+            return;
         }
-        value.runSafely(value.timedOut);
-        value.continuation.complete(ToolResult.simple("timeout", "command approval timed out"));
+        result.whenComplete((toolResult, failure) -> {
+            if (failure != null) {
+                continuation.complete(simple("terminal_error", "approved_action_failed", safeMessage(failure)));
+            } else if (toolResult == null) {
+                continuation.complete(simple("terminal_error", "approved_action_failed",
+                        "approved action returned no result"));
+            } else {
+                continuation.complete(toolResult);
+            }
+        });
     }
 
-    private static TimeoutScheduler foliaScheduler(FoliaTasks tasks) {
-        Objects.requireNonNull(tasks, "tasks");
-        return (delay, action) -> {
-            ScheduledTask task = tasks.asyncLater(delay.toMillis(), TimeUnit.MILLISECONDS, ignored -> action.run());
-            return task::cancel;
+    private static ToolResult legacyRejection(InteractionManager.Result result) {
+        return switch (result.status()) {
+            case BUSY -> ToolResult.simple("denied", "player already has a pending approval");
+            case CANCELLED -> cancelledResult(result);
+            case PLAYER_OFFLINE -> simple("denied", "player_offline", result.message());
+            default -> simple(result.status().wireName(), result.errorCode(), result.message());
         };
     }
 
-    private static ToolResult disabledResult() {
-        return ToolResult.simple("terminal_error", "plugin disabled while command approval was pending");
+    private static ToolResult cancelledResult(InteractionManager.Result result) {
+        if ("plugin_disabled".equals(result.errorCode())) {
+            return ToolResult.simple("terminal_error", "plugin disabled while command approval was pending");
+        }
+        if ("configuration_changed".equals(result.errorCode())) {
+            return ToolResult.simple("denied", "configuration changed during command approval");
+        }
+        return simple("cancelled", result.errorCode(), result.message());
     }
 
-    private static String requireToken(String token) {
-        Objects.requireNonNull(token, "token");
-        try {
-            if (!UUID.fromString(token).toString().equals(token)) {
-                throw new IllegalArgumentException("approval token must be canonical UUID text");
-            }
-        } catch (IllegalArgumentException exception) {
-            throw new IllegalArgumentException("approval token must be canonical UUID text", exception);
+    private static ToolResult simple(String status, String errorCode, String message) {
+        JsonObject output = new JsonObject();
+        output.addProperty("status", status);
+        output.addProperty("error_code", errorCode == null ? "interaction_failure" : errorCode);
+        output.addProperty("message", message == null ? "interaction failed" : message);
+        return new ToolResult(status, output);
+    }
+
+    private static ApprovalOutcome outcome(InteractionManager.Outcome result) {
+        return result == InteractionManager.Outcome.APPROVED
+                ? ApprovalOutcome.STARTED : ApprovalOutcome.NONE;
+    }
+
+    private static void requireGeneration(long generation) {
+        if (generation < 0L) {
+            throw new IllegalArgumentException("expected generation must not be negative");
         }
-        return token;
+    }
+
+    private static void runSafely(Runnable callback) {
+        try {
+            callback.run();
+        } catch (RuntimeException ignored) {
+            // Registry completion must not be held hostage by a notification callback.
+        }
     }
 
     private static String safeMessage(Throwable error) {
-        String message = error.getMessage();
-        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+        Throwable current = error;
+        while ((current instanceof java.util.concurrent.CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 
     public enum ApprovalOutcome {
@@ -404,15 +339,13 @@ public final class ApprovalManager {
     public static final class Registration {
         private final boolean accepted;
         private final CompletableFuture<ToolResult> continuation;
-        private final ApprovalManager owner;
-        private final Pending pending;
+        private final InteractionManager.Registration generic;
 
         private Registration(boolean accepted, CompletableFuture<ToolResult> continuation,
-                             ApprovalManager owner, Pending pending) {
+                             InteractionManager.Registration generic) {
             this.accepted = accepted;
             this.continuation = Objects.requireNonNull(continuation, "continuation");
-            this.owner = owner;
-            this.pending = pending;
+            this.generic = generic;
         }
 
         public boolean accepted() {
@@ -423,19 +356,31 @@ public final class ApprovalManager {
             return continuation;
         }
 
-        /** Arms the timeout for this exact reservation. It may succeed at most once. */
         public boolean activate() {
-            return accepted && owner.activate(pending);
+            return accepted && generic.activate();
         }
 
-        /** Aborts only this exact, not-yet-activated reservation. */
         public boolean abort(ToolResult result) {
             Objects.requireNonNull(result, "result");
-            return accepted && owner.abort(pending, result);
+            if (!accepted) {
+                return false;
+            }
+            return generic.abort(adapt(result, "approval_aborted"));
+        }
+
+        /** Exact cancellation hook used by async ToolExecution owners. */
+        public boolean cancel(ToolResult result) {
+            Objects.requireNonNull(result, "result");
+            if (!accepted) {
+                return false;
+            }
+            String message = result.output().has("message")
+                    ? result.output().get("message").getAsString() : "approval was cancelled";
+            return generic.cancel(InteractionManager.Result.cancelled("approval_cancelled", message));
         }
 
         private static Registration rejected(ToolResult result) {
-            return new Registration(false, CompletableFuture.completedFuture(result), null, null);
+            return new Registration(false, CompletableFuture.completedFuture(result), null);
         }
     }
 
@@ -449,103 +394,16 @@ public final class ApprovalManager {
         void cancel();
     }
 
-    private enum State {
-        RESERVED,
-        WAITING,
-        APPROVED,
-        REJECTED,
-        TIMED_OUT,
-        CANCELLED
-    }
-
-    private static final class Pending {
-        private static final Cancellable NOOP = () -> { };
-
-        private final UUID playerId;
-        private final String token;
-        private final long generation;
-        private final Duration timeoutDelay;
-        private final Supplier<? extends CompletionStage<ToolResult>> approvedAction;
-        private final Runnable timedOut;
-        private final Runnable rejected;
-        private final Runnable cancelled;
-        private final CompletableFuture<ToolResult> continuation = new CompletableFuture<>();
-        private final AtomicReference<State> state = new AtomicReference<>(State.RESERVED);
-        private final AtomicReference<Cancellable> timeout = new AtomicReference<>(NOOP);
-
-        private Pending(UUID playerId, String token, long generation, Duration timeoutDelay,
-                        Supplier<? extends CompletionStage<ToolResult>> approvedAction,
-                        Runnable timedOut, Runnable rejected, Runnable cancelled) {
-            this.playerId = playerId;
-            this.token = token;
-            this.generation = generation;
-            this.timeoutDelay = timeoutDelay;
-            this.approvedAction = approvedAction;
-            this.timedOut = timedOut;
-            this.rejected = rejected;
-            this.cancelled = cancelled;
-        }
-
-        private boolean transition(State expected, State replacement) {
-            return state.compareAndSet(expected, replacement);
-        }
-
-        private boolean transitionPending(State replacement) {
-            while (true) {
-                State current = state.get();
-                if (current != State.RESERVED && current != State.WAITING) {
-                    return false;
-                }
-                if (state.compareAndSet(current, replacement)) {
-                    return true;
-                }
-            }
-        }
-
-        private void installTimeout(Cancellable task) {
-            timeout.set(task);
-            if (state.get() != State.WAITING) {
-                task.cancel();
-            }
-        }
-
-        private void cancelTimeout() {
-            timeout.getAndSet(NOOP).cancel();
-        }
-
-        private void runApproved() {
-            CompletionStage<ToolResult> result;
-            try {
-                result = Objects.requireNonNull(approvedAction.get(), "approved action result");
-            } catch (RuntimeException exception) {
-                continuation.complete(ToolResult.simple("terminal_error", safeMessage(exception)));
-                return;
-            }
-            result.whenComplete((toolResult, error) -> {
-                if (error != null) {
-                    continuation.complete(ToolResult.simple("terminal_error", safeMessage(error)));
-                } else if (toolResult == null) {
-                    continuation.complete(ToolResult.simple("terminal_error", "approved action returned no result"));
-                } else {
-                    continuation.complete(toolResult);
-                }
-            });
-        }
-
-        private void cancel(ToolResult result) {
-            if (transitionPending(State.CANCELLED)) {
-                cancelTimeout();
-                runSafely(cancelled);
-                continuation.complete(result);
-            }
-        }
-
-        private void runSafely(Runnable callback) {
-            try {
-                callback.run();
-            } catch (RuntimeException ignored) {
-                // State and continuation completion must not be held hostage by a notification callback.
-            }
-        }
+    private static InteractionManager.Result adapt(ToolResult result, String fallbackCode) {
+        String status = result.status();
+        String message = result.output().has("message")
+                ? result.output().get("message").getAsString() : "approval was cancelled";
+        String errorCode = result.output().has("error_code")
+                ? result.output().get("error_code").getAsString() : fallbackCode;
+        return switch (status) {
+            case "invalid" -> InteractionManager.Result.invalid(errorCode, message);
+            case "cancelled" -> InteractionManager.Result.cancelled(errorCode, message);
+            default -> InteractionManager.Result.denied(errorCode, message);
+        };
     }
 }

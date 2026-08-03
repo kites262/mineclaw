@@ -1,6 +1,7 @@
 package cc.kites.mineclaw.workspace;
 
 import cc.kites.mineclaw.config.MineclawConfig;
+import cc.kites.mineclaw.function.FunctionCatalogLoader;
 import com.google.gson.JsonArray;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,200 +20,305 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ToolCatalogLoaderTest {
     @Test
-    void fixedLoadRequiresTheExplicitWorkspaceAndRejectsSecretAliases(@TempDir Path directory)
+    void fixedLoadRequiresExplicitDataRootAndRejectsSecretAliases(@TempDir Path directory)
             throws Exception {
         Path toolsFile = directory.resolve(ToolCatalogLoader.TOOLS_FILE_NAME);
         Files.writeString(toolsFile, resource("/tools.yml"), StandardCharsets.UTF_8);
-        MineclawConfig.Tools settings = new MineclawConfig.Tools(true, Set.of());
         ToolCatalogLoader loader = new ToolCatalogLoader();
 
-        assertThat(loader.load(directory, toolsFile, settings).enabledDefinitions()).hasSize(8);
+        assertThat(loader.load(directory, toolsFile, enabledSettings())
+                .enabledDefinitions()).hasSize(9);
 
         Files.delete(toolsFile);
         Path secret = directory.resolve(".env");
         Files.writeString(secret, "TOP_SECRET_VALUE", StandardCharsets.UTF_8);
         Files.createLink(toolsFile, secret);
-
-        assertThatThrownBy(() -> loader.load(directory, toolsFile, settings))
+        assertThatThrownBy(() -> loader.load(directory, toolsFile, enabledSettings()))
                 .isInstanceOf(AccessDeniedException.class)
                 .hasMessageNotContaining("TOP_SECRET_VALUE");
     }
 
     @Test
-    void fixedLoadRejectsAWorkspaceExternalSymlink(@TempDir Path directory) throws Exception {
-        Path workspace = Files.createDirectories(directory.resolve("workspace"));
+    void loadsBundledSchema2CatalogAndResolvesEveryDeclaredHandler() throws Exception {
+        ToolCatalog catalog = parse(resource("/tools.yml"));
+
+        assertThat(catalog.definitions()).hasSize(9);
+        assertThat(catalog.enabledDefinitions()).hasSize(9);
+        assertThat(catalog.invalidDefinitions()).isEmpty();
+        assertThat(catalog.findEnabled("inventory")).get().satisfies(tool -> {
+            assertThat(tool.registeredHandler()).contains(ToolDefinition.Handler.INVENTORY);
+            assertThat(tool.modelFunctionName()).isEqualTo("inventory");
+        });
+        assertThat(catalog.findEnabled("call_function")).get().satisfies(tool ->
+                assertThat(tool.registeredHandler()).contains(ToolDefinition.Handler.CALL_FUNCTION));
+        JsonArray wire = catalog.toChatCompletionsTools();
+        assertThat(wire).hasSize(9);
+        assertThat(FunctionCatalogLoader.nativeCapabilityAllowlist(catalog))
+                .contains("inventory", "read")
+                .doesNotContain("call_function", "mimo_web_search");
+    }
+
+    @Test
+    void rejectsEveryPreSchema2RootWithoutCompatibilityParsing() {
+        ToolCatalog catalog = parse("""
+                - name: list
+                  handler: list
+                  description: legacy
+                  parameters: {type: object}
+                  enabled: true
+                """);
+
+        assertThat(catalog.definitions()).isEmpty();
+        assertThat(catalog.diagnostics()).singleElement().asString()
+                .contains("invalid_root", "expected Schema 2")
+                .doesNotContain("migration");
+    }
+
+    @Test
+    void rejectsUnsupportedSchemaAndStrictRootFields() {
+        assertThat(parse("schema: 1\ntools: []\n").diagnostics())
+                .singleElement().asString().contains("unsupported_schema");
+        assertThat(parse("schema: 2\ntools: []\nlegacy: true\n").diagnostics())
+                .singleElement().asString().contains("unknown_field", "$.legacy");
+    }
+
+    @Test
+    void rejectsYamlAnchorsAliasesAndMergeKeys() {
+        ToolCatalog catalog = parse("""
+                schema: 2
+                tools:
+                  - &base
+                    handler: list
+                    enabled: true
+                    payload:
+                      type: function
+                      function:
+                        name: list
+                        description: valid
+                        parameters: {type: object, properties: {}, additionalProperties: false}
+                  - <<: *base
+                    handler: read
+                """);
+
+        assertThat(catalog.definitions()).isEmpty();
+        assertThat(catalog.diagnostics()).singleElement().asString()
+                .contains("invalid_root", "invalid YAML");
+    }
+
+    @Test
+    void requiresExactlyHandlerEnabledAndPayloadAndRejectsIdAndMetadata() {
+        ToolCatalog catalog = parse("""
+                schema: 2
+                tools:
+                  - handler: list
+                    payload: {type: function, function: {name: list, description: x, parameters: {type: object}}}
+                  - handler: read
+                    enabled: "true"
+                    payload: {type: function, function: {name: read, description: x, parameters: {type: object}}}
+                  - handler: grep
+                    enabled: true
+                    id: grep
+                    metadata: {type: mineclaw}
+                    payload: {type: function, function: {name: grep, description: x, parameters: {type: object}}}
+                """);
+
+        assertThat(catalog.invalidDefinitions()).hasSize(3);
+        assertThat(catalog.diagnostics())
+                .anyMatch(value -> value.contains("missing_field at entry.enabled"))
+                .anyMatch(value -> value.contains("invalid_field_type at enabled"))
+                .anyMatch(value -> value.contains("unknown_field at entry.id"));
+    }
+
+    @Test
+    void validatesDisabledEntriesCompletelyAndAppliesGlobalHandlerSwitches() {
+        String valid = root(entry("list", false) + entry("read", true));
+        ToolCatalog filtered = new ToolCatalogLoader().parse(valid,
+                new MineclawConfig.Tools(true, Set.of("read")));
+        assertThat(filtered.invalidDefinitions()).isEmpty();
+        assertThat(filtered.enabledDefinitions()).isEmpty();
+        assertThat(filtered.definitions()).extracting(ToolDefinition::status)
+                .containsOnly(ToolDefinition.Status.DISABLED);
+
+        String malformedDisabled = root("""
+                  - handler: read
+                    enabled: false
+                    payload: {type: web_search}
+                """);
+        assertThat(parse(malformedDisabled).invalidDefinitions()).hasSize(1);
+    }
+
+    @Test
+    void isolatesEntryFailuresAndMarksEveryDuplicateHandlerInvalid() {
+        String yaml = root(entry("list", true) + entry("read", true) + entry("read", true) + """
+                  - handler: bad/identifier
+                    enabled: true
+                    payload: {type: function}
+                """);
+        ToolCatalog catalog = parse(yaml);
+
+        assertThat(catalog.enabledDefinitions()).extracting(ToolDefinition::handler).containsExactly("list");
+        assertThat(catalog.invalidDefinitions()).extracting(ToolDefinition::handler)
+                .containsExactly("read", "read", "bad/identifier");
+        assertThat(catalog.diagnostics())
+                .anyMatch(value -> value.contains("duplicate_handler"))
+                .anyMatch(value -> value.contains("invalid_handler"));
+    }
+
+    @Test
+    void handlerMustBeRegisteredAndPayloadNameMustEqualIt() {
+        ToolCatalog catalog = parse(root("""
+                  - handler: alias
+                    enabled: true
+                    payload:
+                      type: function
+                      function:
+                        name: read
+                        description: alias
+                        parameters: {type: object, properties: {}, additionalProperties: false}
+                  - handler: read
+                    enabled: true
+                    payload:
+                      type: function
+                      function:
+                        name: list
+                        description: mismatch
+                        parameters: {type: object, properties: {}, additionalProperties: false}
+                  - handler: list
+                    enabled: true
+                    payload: {type: web_search}
+                """));
+
+        assertThat(catalog.invalidDefinitions()).hasSize(3);
+        assertThat(catalog.diagnostics())
+                .anyMatch(value -> value.contains("unknown_handler at handler"))
+                .anyMatch(value -> value.contains("payload_handler_mismatch at payload.function.name"))
+                .anyMatch(value -> value.contains("missing_field at payload.function"));
+    }
+
+    @Test
+    void functionPayloadSchemaUsesStrictSupportedKeywordsAndTypes() {
+        String yaml = root("""
+                  - handler: read
+                    enabled: true
+                    payload:
+                      type: function
+                      function:
+                        name: read
+                        description: invalid schema
+                        parameters:
+                          type: object
+                          properties:
+                            path: {type: string, minimum: 1}
+                          required: [missing]
+                          additionalProperties: false
+                          unevaluatedProperties: false
+                """);
+        assertThat(parse(yaml).diagnostics()).singleElement().asString()
+                .contains("invalid_payload", "unknown_field", "unevaluatedProperties");
+    }
+
+    @Test
+    void callFunctionHandlerEnforcesItsFixedGatewayContract() {
+        String yaml = root("""
+                  - handler: call_function
+                    enabled: true
+                    payload:
+                      type: function
+                      function:
+                        name: call_function
+                        description: drifted
+                        parameters:
+                          type: object
+                          properties:
+                            function: {type: string}
+                            arguments: {type: object, additionalProperties: false}
+                          required: [function]
+                          additionalProperties: false
+                """);
+        assertThat(parse(yaml).diagnostics()).singleElement().asString()
+                .contains("invalid_payload", "call_function gateway property contract is fixed");
+    }
+
+    @Test
+    void providerAndCustomEntriesHaveNoLocalSchemaRepresentation() {
+        ToolCatalog legacyMetadata = parse(root("""
+                  - handler: mimo_web_search
+                    enabled: true
+                    metadata: {type: provider, provider: mimo}
+                    payload: {type: web_search}
+                """));
+        assertThat(legacyMetadata.diagnostics()).singleElement().asString()
+                .contains("unknown_field at entry.metadata");
+
+        ToolCatalog customHandler = parse(root("""
+                  - handler: mimo_web_search
+                    enabled: true
+                    payload: {type: web_search}
+                """));
+        assertThat(customHandler.diagnostics()).singleElement().asString()
+                .contains("unknown_handler at handler");
+    }
+
+    @Test
+    void diagnosticsAreContextualStableAndDoNotEchoPayloadText() {
+        ArrayList<String> warnings = new ArrayList<>();
+        ToolCatalog catalog = new ToolCatalogLoader(warnings::add).parse(root("""
+                  - handler: read
+                    enabled: true
+                    payload:
+                      type: function
+                      function:
+                        name: wrong
+                        description: TOP_SECRET_PAYLOAD_TEXT
+                        parameters: {type: object, properties: {}, additionalProperties: false}
+                """), enabledSettings());
+
+        assertThat(catalog.diagnostics()).singleElement().asString()
+                .contains("tools.yml entry #1 (read)", "payload_handler_mismatch",
+                        "payload.function.name")
+                .doesNotContain("TOP_SECRET_PAYLOAD_TEXT");
+        assertThat(warnings).containsExactlyElementsOf(catalog.diagnostics());
+        assertThat(catalog.invalidDefinitions().getFirst().diagnostic())
+                .contains(catalog.diagnostics().getFirst());
+    }
+
+    @Test
+    void fixedLoadRejectsDataRootExternalSymlink(@TempDir Path directory) throws Exception {
+        Path dataRoot = Files.createDirectories(directory.resolve("data"));
         Path outside = directory.resolve("outside.yml");
         Files.writeString(outside, "TOP_SECRET_VALUE", StandardCharsets.UTF_8);
-        Path toolsFile = workspace.resolve(ToolCatalogLoader.TOOLS_FILE_NAME);
+        Path toolsFile = dataRoot.resolve(ToolCatalogLoader.TOOLS_FILE_NAME);
         Files.createSymbolicLink(toolsFile, outside);
 
-        assertThatThrownBy(() -> new ToolCatalogLoader().load(workspace, toolsFile,
-                new MineclawConfig.Tools(true, Set.of())))
+        assertThatThrownBy(() -> new ToolCatalogLoader().load(dataRoot, toolsFile, enabledSettings()))
                 .isInstanceOf(AccessDeniedException.class)
                 .hasMessageNotContaining("TOP_SECRET_VALUE")
                 .hasMessageNotContaining(outside.toString());
     }
 
-    @Test
-    void loadsBundledCatalogAndBuildsChatCompletionsSchema() throws Exception {
-        ToolCatalog catalog = new ToolCatalogLoader().parse(resource("/tools.yml"),
-                new MineclawConfig.Tools(true, Set.of()));
-
-        assertThat(catalog.definitions()).hasSize(8);
-        assertThat(catalog.enabledDefinitions()).hasSize(8);
-        assertThat(catalog.invalidDefinitions()).isEmpty();
-        assertThat(catalog.findEnabled("online_players"))
-                .get().extracting(tool -> tool.handler().orElseThrow())
-                .isEqualTo(ToolDefinition.Handler.ONLINE_PLAYERS);
-        assertThat(catalog.findEnabled("run_command"))
-                .get().extracting(tool -> tool.handler().orElseThrow())
-                .isEqualTo(ToolDefinition.Handler.RUN_COMMAND);
-
-        JsonArray wireTools = catalog.toChatCompletionsTools();
-        assertThat(wireTools).hasSize(8);
-        assertThat(wireTools.get(0).getAsJsonObject().get("type").getAsString()).isEqualTo("function");
-        assertThat(wireTools.get(0).getAsJsonObject().getAsJsonObject("function").get("name").getAsString())
-                .isEqualTo("look_block");
+    private static ToolCatalog parse(String yaml) {
+        return new ToolCatalogLoader().parse(yaml, enabledSettings());
     }
 
-    @Test
-    void appliesGlobalEntryAndDisableListSwitchesWithoutMakingEntriesInvalid() {
-        String yaml = """
-                - name: one
-                  handler: list
-                  description: first
-                  parameters: {type: object}
-                - name: two
-                  handler: read
-                  description: second
-                  parameters: {type: object}
-                  enabled: false
-                """;
-
-        ToolCatalog filtered = new ToolCatalogLoader().parse(yaml,
-                new MineclawConfig.Tools(true, Set.of("one")));
-        assertThat(filtered.enabledDefinitions()).isEmpty();
-        assertThat(filtered.invalidDefinitions()).isEmpty();
-        assertThat(filtered.definitions()).extracting(ToolDefinition::status)
-                .containsOnly(ToolDefinition.Status.DISABLED);
-        assertThat(filtered.diagnostics()).isEmpty();
-
-        ToolCatalog globallyDisabled = new ToolCatalogLoader().parse(yaml,
-                new MineclawConfig.Tools(false, Set.of()));
-        assertThat(globallyDisabled.enabledDefinitions()).isEmpty();
-        assertThat(globallyDisabled.invalidDefinitions()).isEmpty();
+    private static MineclawConfig.Tools enabledSettings() {
+        return new MineclawConfig.Tools(true, Set.of());
     }
 
-    @Test
-    void isolatesUnknownDuplicateAndMalformedEntries() {
-        ArrayList<String> warnings = new ArrayList<>();
-        String yaml = """
-                - name: good
-                  handler: list
-                  description: usable
-                  parameters: {type: object}
-                - name: bad_handler
-                  handler: explode
-                  description: nope
-                  parameters: {type: object}
-                - name: good
-                  handler: read
-                  description: duplicate
-                  parameters: {type: object}
-                - not-a-map
-                - name: bad_parameters
-                  handler: grep
-                  description: nope
-                  parameters: []
-                - name: wrong_case
-                  handler: LIST
-                  description: enum names are exact
-                  parameters: {type: object}
-                - name: also_good
-                  handler: inventory
-                  description: usable too
-                  parameters: {type: object}
-                """;
-
-        ToolCatalog catalog = new ToolCatalogLoader(warnings::add).parse(yaml,
-                new MineclawConfig.Tools(true, Set.of()));
-
-        assertThat(catalog.definitions()).hasSize(7);
-        assertThat(catalog.enabledDefinitions()).extracting(ToolDefinition::name)
-                .containsExactly("good", "also_good");
-        assertThat(catalog.invalidDefinitions()).hasSize(5);
-        assertThat(catalog.invalidDefinitions()).extracting(tool -> tool.diagnostic().orElseThrow())
-                .anyMatch(message -> message.contains("unknown handler"))
-                .anyMatch(message -> message.contains("duplicate tool name"))
-                .anyMatch(message -> message.contains("entry must be a mapping"))
-                .anyMatch(message -> message.contains("parameters must be a JSON object"));
-        assertThat(warnings).hasSize(5);
+    private static String root(String entries) {
+        return "schema: 2\ntools:\n" + entries;
     }
 
-    @Test
-    void malformedTopLevelProducesAnEmptyDiagnosticCatalog() {
-        ArrayList<String> warnings = new ArrayList<>();
-        ToolCatalog catalog = new ToolCatalogLoader(warnings::add).parse("name: list\nhandler: list\n",
-                new MineclawConfig.Tools(true, Set.of()));
-
-        assertThat(catalog.definitions()).isEmpty();
-        assertThat(catalog.diagnostics()).singleElement().asString().contains("top level must be a YAML list");
-        assertThat(warnings).containsExactlyElementsOf(catalog.diagnostics());
-    }
-
-    @Test
-    void rejectsInvalidJsonSchemaWithoutDroppingOtherTools() {
-        String yaml = """
-                - name: bad
-                  handler: list
-                  description: bad schema
-                  parameters: {type: banana}
-                - name: good
-                  handler: run_command
-                  description: valid nullable property
-                  parameters:
-                    type: object
-                    properties:
-                      player: {type: [string, 'null']}
-                    required: [player]
-                """;
-
-        ToolCatalog catalog = new ToolCatalogLoader().parse(yaml,
-                new MineclawConfig.Tools(true, Set.of()));
-        assertThat(catalog.invalidDefinitions()).extracting(ToolDefinition::name).containsExactly("bad");
-        assertThat(catalog.enabledDefinitions()).extracting(ToolDefinition::name).containsExactly("good");
-    }
-
-    @Test
-    void rejectsInvalidNumericSchemaKeywordsAtCatalogLoadTime() {
-        String yaml = """
-                - name: bad_minimum
-                  handler: list
-                  description: invalid numeric keyword
-                  parameters:
-                    type: object
-                    properties:
-                      depth: {type: integer, minimum: nope}
-                - name: reversed_range
-                  handler: list
-                  description: invalid numeric range
-                  parameters:
-                    type: object
-                    properties:
-                      depth: {type: integer, minimum: 5, maximum: 1}
-                - name: bad_additional_schema
-                  handler: list
-                  description: invalid additional-properties schema
-                  parameters:
-                    type: object
-                    additionalProperties: {type: integer, minimum: nope}
-                """;
-
-        ToolCatalog catalog = new ToolCatalogLoader().parse(yaml,
-                new MineclawConfig.Tools(true, Set.of()));
-
-        assertThat(catalog.invalidDefinitions()).extracting(ToolDefinition::name)
-                .containsExactly("bad_minimum", "reversed_range", "bad_additional_schema");
+    private static String entry(String handler, boolean enabled) {
+        return """
+                  - handler: %s
+                    enabled: %s
+                    payload:
+                      type: function
+                      function:
+                        name: %s
+                        description: valid
+                        parameters: {type: object, properties: {}, additionalProperties: false}
+                """.formatted(handler, enabled, handler);
     }
 
     private static String resource(String name) throws IOException {

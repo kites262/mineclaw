@@ -1,0 +1,40 @@
+schema: 1
+default: mimo/mimo-v2.5
+
+providers:
+  mimo:
+    api:
+      type: openai_chat_completions
+      base_url: https://api.xiaomimimo.com/v1
+      api_key: ${MINECLAW_API_KEY}
+    transport:
+      timeout_ms: 60000
+      retry:
+        max_retries: 5
+        backoff_ms: 500
+    tools:
+      - id: mimo_web_search
+        payload:
+          type: web_search
+          max_keyword: 3
+          force_search: false
+          limit: 3
+          user_location:
+            type: approximate
+            country: China
+            region: Hubei
+            city: Wuhan
+
+models:
+  mimo/mimo-v2.5:
+    limits:
+      context_window_tokens: 131072
+      max_output_tokens: 16384
+      compact_trigger_tokens: 102400
+    interleaved:
+      field: reasoning_content
+    request:
+      prompt_cache_key: true
+      extra_body:
+        thinking:
+          type: enabled

@@ -1,0 +1,99 @@
+package cc.kites.mineclaw.turn;
+
+import cc.kites.mineclaw.api.ApiMessage;
+import cc.kites.mineclaw.api.ApiUsage;
+import cc.kites.mineclaw.api.ToolCall;
+import com.google.gson.JsonObject;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+
+/** Provider-calibrated prompt estimator with a deterministic local fallback for missing Usage. */
+final class ContextTokenEstimator {
+    private static final double MIN_FACTOR = 0.25d;
+    private static final double MAX_FACTOR = 8.0d;
+
+    private final ConcurrentHashMap<String, Double> factors = new ConcurrentHashMap<>();
+
+    Estimate estimate(String modelReference, String system, List<ApiMessage> messages,
+                      List<JsonObject> tools) {
+        Objects.requireNonNull(modelReference, "modelReference");
+        int raw = rawEstimate(system, messages, tools);
+        double factor = factors.getOrDefault(modelReference, 1.0d);
+        return new Estimate(raw, saturatedCeil(raw * factor), factors.containsKey(modelReference));
+    }
+
+    Estimate estimateRaw(String modelReference, int rawTokens) {
+        Objects.requireNonNull(modelReference, "modelReference");
+        if (rawTokens < 1) {
+            throw new IllegalArgumentException("rawTokens must be positive");
+        }
+        double factor = factors.getOrDefault(modelReference, 1.0d);
+        return new Estimate(rawTokens, saturatedCeil(rawTokens * factor),
+                factors.containsKey(modelReference));
+    }
+
+    int estimateMessages(String modelReference, List<ApiMessage> messages) {
+        return estimateRaw(modelReference, Math.max(1, messageEstimate(messages))).tokens();
+    }
+
+    void observe(String modelReference, int rawEstimate, ApiUsage usage) {
+        Objects.requireNonNull(modelReference, "modelReference");
+        if (rawEstimate < 1 || usage == null) {
+            return;
+        }
+        Integer observed = usage.promptTokens() != null ? usage.promptTokens() : usage.totalTokens();
+        if (observed == null || observed < 1) {
+            return;
+        }
+        double sample = clamp((double) observed / rawEstimate);
+        factors.merge(modelReference, sample, (previous, next) -> clamp(previous * 0.35d + next * 0.65d));
+    }
+
+    static int rawEstimate(String system, List<ApiMessage> messages, List<JsonObject> tools) {
+        long tokens = 8L + textTokens(system);
+        for (ApiMessage message : Objects.requireNonNull(messages, "messages")) {
+            tokens += 4L + textTokens(message.role()) + textTokens(message.content());
+            for (ToolCall call : message.toolCalls()) {
+                tokens += 8L + textTokens(call.id()) + textTokens(call.name())
+                        + textTokens(call.arguments());
+            }
+            tokens += textTokens(message.toolCallId());
+            for (var entry : message.providerFields().entrySet()) {
+                tokens += textTokens(entry.getKey()) + textTokens(entry.getValue());
+            }
+        }
+        for (JsonObject tool : Objects.requireNonNull(tools, "tools")) {
+            tokens += 8L + textTokens(tool.toString());
+        }
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(1L, tokens));
+    }
+
+    static int messageEstimate(List<ApiMessage> messages) {
+        return rawEstimate("", messages, List.of()) - 8;
+    }
+
+    private static long textTokens(String value) {
+        if (value == null || value.isEmpty()) {
+            return 0L;
+        }
+        long quarterUnits = 0L;
+        for (int offset = 0; offset < value.length();) {
+            int codePoint = value.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+            quarterUnits += codePoint <= 0x7f ? 1L : 4L;
+        }
+        return (quarterUnits + 3L) / 4L;
+    }
+
+    private static int saturatedCeil(double value) {
+        return value >= Integer.MAX_VALUE ? Integer.MAX_VALUE : Math.max(1, (int) Math.ceil(value));
+    }
+
+    private static double clamp(double value) {
+        return Math.max(MIN_FACTOR, Math.min(MAX_FACTOR, value));
+    }
+
+    record Estimate(int rawTokens, int tokens, boolean providerCalibrated) { }
+}

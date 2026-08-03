@@ -16,16 +16,17 @@ public final class AuditLogger {
     }
 
     public void command(String action, Map<String, ?> fields) {
-        LinkedHashMap<String, Object> record = new LinkedHashMap<>();
-        record.put("time", Instant.now());
-        record.putAll(fields);
-        log("command." + action, record);
+        log("command." + action, fields);
     }
 
     public void log(String action, Map<String, ?> fields) {
         StringJoiner line = new StringJoiner(" ", "[AUDIT] ", "");
         line.add("action=" + quote(action));
-        fields.forEach((key, value) -> line.add(safeKey(key) + "=" + quote(String.valueOf(value))));
+        LinkedHashMap<String, Object> record = new LinkedHashMap<>();
+        record.put("time", Instant.now());
+        record.putAll(fields);
+        record.forEach((key, value) ->
+                line.add(safeKey(key) + "=" + quote(String.valueOf(value))));
         logger.info(line.toString());
     }
 

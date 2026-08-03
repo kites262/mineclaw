@@ -8,8 +8,8 @@ plugins {
 }
 
 group = "cc.kites"
-version = "0.1.2"
-description = "Folia-native in-game AI harness for Minecraft"
+version = "1.0.0"
+description = "Workspace-first AI Agent runtime for Paper and Folia"
 
 repositories {
     mavenCentral()
@@ -36,6 +36,8 @@ kotlin {
 dependencies {
     compileOnly("io.papermc.paper:paper-api:26.2.build.87-stable")
     implementation("com.google.code.gson:gson:2.14.0")
+    implementation("org.graalvm.polyglot:polyglot:25.2.4")
+    runtimeOnly("org.graalvm.polyglot:js:25.2.4")
     implementation("org.yaml:snakeyaml:2.4")
 
     testImplementation(platform("org.junit:junit-bom:5.13.4"))
@@ -63,7 +65,9 @@ tasks.withType<Test>().configureEach {
 tasks.jar {
     archiveBaseName.set("Mineclaw")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(configurations.runtimeClasspath.map { classpath -> classpath.map(::zipTree) })
+    from(configurations.runtimeClasspath.map { classpath ->
+        classpath.filter { dependency -> dependency.extension == "jar" }.map(::zipTree)
+    })
     from("LICENSE") {
         into("META-INF")
         rename { "LICENSE-APACHE-2.0.txt" }

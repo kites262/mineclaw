@@ -1,10 +1,12 @@
 package cc.kites.mineclaw.support;
 
+import cc.kites.mineclaw.interaction.InteractionManager;
 import cc.kites.mineclaw.workspace.WorkspacePathSecurity;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import net.kyori.adventure.text.minimessage.tag.standard.StandardTags;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -23,7 +25,7 @@ import java.util.function.Consumer;
 
 /** Hot-reads player-visible message templates and falls back to bundled Chinese defaults. */
 public final class MessageService {
-    private static final MiniMessage MINI = MiniMessage.miniMessage();
+    private static final MiniMessage MINI = MiniMessage.builder().tags(StandardTags.color()).build();
     private static final String MESSAGE_FILE_NAME = "message.yml";
 
     private final Path root;
@@ -76,19 +78,84 @@ public final class MessageService {
     public Component renderApprovalPrompt(Map<String, String> values) {
         Objects.requireNonNull(values, "values");
         String token = Objects.requireNonNull(values.get("token"), "approval token");
-        return ApprovalPrompt.render(
+        ApprovalPrompt.Controls controls = ApprovalPrompt.controls(
                 token,
-                render("approve_title", values),
-                render("approve_requester", values),
-                render("approve_intent", values),
-                render("approve_command", values),
-                render("approve_player", values),
-                render("approve_expires", values),
-                render("approve_gesture", values),
                 render("approve_accept_button"),
                 render("approve_reject_button"),
                 render("approve_accept_hover"),
                 render("approve_reject_hover"));
+        Component buttons = render("approve_buttons", values, Map.of(
+                "accept", controls.accept(),
+                "reject", controls.reject()));
+        return render("approve_layout", values, Map.of(
+                "separator", render("approve_separator", values),
+                "prefix", render("approve_prefix", values),
+                "title", render("approve_title", values),
+                "requester", render("approve_requester", values),
+                "intent", render("approve_intent", values),
+                "command", render("approve_command", values),
+                "player", render("approve_player", values),
+                "expires", render("approve_expires", values),
+                "buttons", buttons));
+    }
+
+    /** Renders script text literally while message.yml controls layout around Java-bound actions. */
+    public Component renderInteractionPrompt(String token, InteractionManager.Interaction interaction) {
+        Objects.requireNonNull(token, "token");
+        Objects.requireNonNull(interaction, "interaction");
+        Component prefix = render("interaction_prefix");
+        Component separator = render("interaction_separator");
+        Component title = render("interaction_title", Map.of(), Map.of(
+                "title", Component.text(interaction.title())));
+        Component message = render("interaction_message", Map.of(), Map.of(
+                "message", Component.text(interaction.message())));
+
+        if (interaction instanceof InteractionManager.Confirm) {
+            InteractionPrompt.Controls controls = InteractionPrompt.confirmControls(
+                    token,
+                    render("interaction_accept_button"),
+                    render("interaction_reject_button"),
+                    render("interaction_accept_hover"),
+                    render("interaction_reject_hover"));
+            Component buttons = render("interaction_confirm_buttons", Map.of(), Map.of(
+                    "accept", controls.accept(),
+                    "reject", controls.reject()));
+            return render("interaction_confirm_layout", Map.of(), Map.of(
+                    "separator", separator,
+                    "prefix", prefix,
+                    "title", title,
+                    "message", message,
+                    "buttons", buttons));
+        }
+        if (interaction instanceof InteractionManager.Select select) {
+            Component optionSeparator = render("interaction_select_option_separator", Map.of(), Map.of(
+                    "prefix", prefix));
+            var options = Component.text();
+            for (int index = 0; index < select.options().size(); index++) {
+                InteractionManager.Option option = select.options().get(index);
+                Component literalLabel = Component.text(option.label());
+                Component label = render("interaction_select_option", Map.of(), Map.of(
+                        "label", literalLabel));
+                Component hover = render("interaction_select_option_hover", Map.of(), Map.of(
+                        "label", literalLabel));
+                if (index > 0) {
+                    options.append(optionSeparator);
+                }
+                options.append(InteractionPrompt.selectOption(token, option.id(), label, hover));
+            }
+            Component reject = InteractionPrompt.reject(
+                    token,
+                    render("interaction_reject_button"),
+                    render("interaction_reject_hover"));
+            return render("interaction_select_layout", Map.of(), Map.of(
+                    "separator", separator,
+                    "prefix", prefix,
+                    "title", title,
+                    "message", message,
+                    "options", options.build(),
+                    "reject", reject));
+        }
+        throw new IllegalArgumentException("unsupported interaction type " + interaction.getClass().getName());
     }
 
     private Component render(String key, Map<String, String> values, Map<String, Component> components) {

@@ -6,14 +6,11 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 
-/** One tools.yml entry, including disabled and invalid entries needed by operator diagnostics. */
+/** One immutable Schema-2 tools.yml entry, including disabled and invalid diagnostics. */
 public record ToolDefinition(
         int index,
-        String name,
-        String handlerName,
-        Optional<Handler> handler,
-        String description,
-        JsonObject parameters,
+        String handler,
+        JsonObject payload,
         boolean declaredEnabled,
         Status status,
         Optional<String> diagnostic
@@ -22,67 +19,93 @@ public record ToolDefinition(
         if (index < 1) {
             throw new IllegalArgumentException("index must be one-based");
         }
-        name = Objects.requireNonNull(name, "name");
-        handlerName = Objects.requireNonNull(handlerName, "handlerName");
         handler = Objects.requireNonNull(handler, "handler");
-        description = Objects.requireNonNull(description, "description");
-        parameters = Objects.requireNonNull(parameters, "parameters").deepCopy();
+        payload = Objects.requireNonNull(payload, "payload").deepCopy();
         status = Objects.requireNonNull(status, "status");
         diagnostic = Objects.requireNonNull(diagnostic, "diagnostic");
         if (status == Status.INVALID && diagnostic.isEmpty()) {
             throw new IllegalArgumentException("invalid tools require a diagnostic");
         }
-        if (status != Status.INVALID && handler.isEmpty()) {
-            throw new IllegalArgumentException("valid tools require a supported handler");
+        if (status != Status.INVALID) {
+            if (Handler.fromWireName(handler).isEmpty() || payload.isEmpty()) {
+                throw new IllegalArgumentException("valid tools require a registered handler and payload");
+            }
         }
     }
 
     @Override
-    public JsonObject parameters() {
-        return parameters.deepCopy();
+    public JsonObject payload() {
+        return payload.deepCopy();
     }
 
     public boolean available() {
         return status == Status.ENABLED;
     }
 
-    /** OpenAI Chat Completions function-tool representation. */
+    /** Resolves the exact built-in handler named by the schema field. */
+    public Optional<Handler> registeredHandler() {
+        return Handler.fromWireName(handler);
+    }
+
+    public String payloadType() {
+        return payload.has("type") && payload.get("type").isJsonPrimitive()
+                ? payload.get("type").getAsString() : "";
+    }
+
+    /** Function-call name for locally dispatched Tool types. */
+    public String modelFunctionName() {
+        if (!payload.has("function") || !payload.get("function").isJsonObject()) {
+            return "";
+        }
+        JsonObject function = payload.getAsJsonObject("function");
+        return function.has("name") && function.get("name").isJsonPrimitive()
+                ? function.get("name").getAsString() : "";
+    }
+
+    /** Declared argument Schema for a locally dispatched Function Tool. */
+    public JsonObject parameters() {
+        if (!payload.has("function") || !payload.get("function").isJsonObject()) {
+            return new JsonObject();
+        }
+        JsonObject function = payload.getAsJsonObject("function");
+        return function.has("parameters") && function.get("parameters").isJsonObject()
+                ? function.getAsJsonObject("parameters").deepCopy() : new JsonObject();
+    }
+
+    /** Exact model API Tool declaration. */
     public JsonObject toChatCompletionsTool() {
         if (!available()) {
-            throw new IllegalStateException("Tool " + printableName() + " is not enabled");
+            throw new IllegalStateException("Tool " + printableHandler() + " is not enabled");
         }
-        JsonObject function = new JsonObject();
-        function.addProperty("name", name);
-        function.addProperty("description", description);
-        function.add("parameters", parameters.deepCopy());
-
-        JsonObject tool = new JsonObject();
-        tool.addProperty("type", "function");
-        tool.add("function", function);
-        return tool;
+        return payload.deepCopy();
     }
 
-    public String printableName() {
-        return name.isBlank() ? "entry #" + index : name;
+    public String printableHandler() {
+        return handler.isBlank() ? "entry #" + index : handler;
     }
 
-    static ToolDefinition valid(
-            int index,
-            String name,
-            Handler handler,
-            String description,
-            JsonObject parameters,
-            boolean declaredEnabled,
-            Status status,
-            String diagnostic
-    ) {
-        return new ToolDefinition(index, name, handler.wireName(), Optional.of(handler), description, parameters,
-                declaredEnabled, status, Optional.ofNullable(diagnostic));
+    ToolDefinition withDiagnostic(String contextualDiagnostic) {
+        if (status != Status.INVALID) {
+            return this;
+        }
+        return new ToolDefinition(index, handler, payload, false,
+                Status.INVALID, Optional.of(contextualDiagnostic));
     }
 
-    static ToolDefinition invalid(int index, String name, String handlerName, String diagnostic) {
-        return new ToolDefinition(index, name, handlerName, Handler.fromWireName(handlerName), "",
-                new JsonObject(), false, Status.INVALID, Optional.of(diagnostic));
+    ToolDefinition duplicateInvalid(String diagnostic) {
+        return new ToolDefinition(index, handler, payload, false,
+                Status.INVALID, Optional.of(diagnostic));
+    }
+
+    static ToolDefinition tool(int index, String handler, JsonObject payload,
+                               boolean declaredEnabled, Status status, String diagnostic) {
+        return new ToolDefinition(index, handler, payload, declaredEnabled, status,
+                Optional.ofNullable(diagnostic));
+    }
+
+    static ToolDefinition invalid(int index, String handler, String diagnostic) {
+        return new ToolDefinition(index, handler, new JsonObject(), false,
+                Status.INVALID, Optional.of(diagnostic));
     }
 
     public enum Status {
@@ -99,7 +122,8 @@ public record ToolDefinition(
         LIST("list"),
         READ("read"),
         GREP("grep"),
-        RUN_COMMAND("run_command");
+        RUN_COMMAND("run_command"),
+        CALL_FUNCTION("call_function");
 
         private final String wireName;
 
@@ -115,9 +139,7 @@ public record ToolDefinition(
             if (value == null) {
                 return Optional.empty();
             }
-            return Arrays.stream(values())
-                    .filter(handler -> handler.wireName.equals(value))
-                    .findFirst();
+            return Arrays.stream(values()).filter(handler -> handler.wireName.equals(value)).findFirst();
         }
     }
 }

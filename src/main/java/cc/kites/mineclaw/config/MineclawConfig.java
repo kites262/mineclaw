@@ -1,10 +1,7 @@
 package cc.kites.mineclaw.config;
 
-import java.net.URI;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -16,11 +13,11 @@ import java.util.regex.Pattern;
 /** Immutable, validated schema-1 runtime configuration. */
 public record MineclawConfig(
         int schema,
-        Api api,
         Context context,
         Chat chat,
         Tools tools,
-        Commands commands,
+        Functions functions,
+        JavaScript javascript,
         RateLimit rateLimit,
         Workspace workspace,
         FileTools fileTools,
@@ -32,11 +29,11 @@ public record MineclawConfig(
     public static final int SCHEMA = 1;
 
     public MineclawConfig {
-        Objects.requireNonNull(api, "api");
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(chat, "chat");
         Objects.requireNonNull(tools, "tools");
-        Objects.requireNonNull(commands, "commands");
+        Objects.requireNonNull(functions, "functions");
+        Objects.requireNonNull(javascript, "javascript");
         Objects.requireNonNull(rateLimit, "rateLimit");
         Objects.requireNonNull(workspace, "workspace");
         Objects.requireNonNull(fileTools, "fileTools");
@@ -50,15 +47,12 @@ public record MineclawConfig(
     public static MineclawConfig defaults() {
         return new MineclawConfig(
                 SCHEMA,
-                new Api(URI.create("https://api.openai.com/v1/chat/completions"), "MINECLAW_API_KEY",
-                        "gpt-5-mini", 60_000, 5, 500),
-                new Context(24, 24_000),
+                new Context(24),
                 new Chat("@ai", Optional.empty(), 2_000, 120),
                 new Tools(true, Set.of()),
-                new Commands(false,
-                        List.of(Pattern.compile(
-                                "^locate structure #?(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+$")),
-                        List.of()),
+                new Functions(1_048_576, 256, 512, 32_768, 16, 2_048, 8),
+                new JavaScript(65_536, 64, 16, 16, 1_000, 300_000,
+                        32_768, 16, 2_048),
                 new RateLimit(5_000, 1_000),
                 new Workspace(true, new Workspace.MaxChars(16_000)),
                 new FileTools(12_000, 100, 4, 3_000),
@@ -66,36 +60,6 @@ public record MineclawConfig(
                 new Identity("Mineclaw"),
                 new Environment(12, 250, new Environment.Inventory(true, 36)),
                 new Logging(Level.INFO));
-    }
-
-    public record Api(
-            URI baseUrl,
-            String apiKey,
-            String model,
-            long timeoutMillis,
-            int maxRetries,
-            long retryBackoffMillis
-    ) {
-        public Api {
-            Objects.requireNonNull(baseUrl, "baseUrl");
-            apiKey = Objects.requireNonNull(apiKey, "apiKey").trim();
-            model = Objects.requireNonNull(model, "model").trim();
-        }
-
-        /** The loader has already resolved this value into the immutable config snapshot. */
-        public Optional<String> configuredApiKey() {
-            if (apiKey.isBlank()) {
-                return Optional.empty();
-            }
-            return Optional.of(apiKey);
-        }
-
-        @Override
-        public String toString() {
-            return "Api[baseUrl=protected, apiKey=protected, model=protected"
-                    + ", timeoutMillis=" + timeoutMillis + ", maxRetries=" + maxRetries
-                    + ", retryBackoffMillis=" + retryBackoffMillis + ']';
-        }
     }
 
     /** In-memory dotenv values whose string form deliberately never exposes secret contents. */
@@ -142,7 +106,7 @@ public record MineclawConfig(
         }
     }
 
-    public record Context(int maxMessages, int maxTokens) {
+    public record Context(int maxMessages) {
     }
 
     public record Chat(
@@ -185,44 +149,52 @@ public record MineclawConfig(
         }
     }
 
-    public record Commands(
-            boolean runEnabled,
-            List<Pattern> playerWhitelist,
-            List<Pattern> consoleWhitelist
+    /** Loading and argument-validation limits for the protected Function registry. */
+    public record Functions(
+            int maxFileChars,
+            int maxEntries,
+            int maxDescriptionChars,
+            int maxArgumentChars,
+            int maxArgumentDepth,
+            int maxArgumentMembers,
+            int maxValidationViolations
     ) {
-        public Commands {
-            playerWhitelist = immutablePatterns(playerWhitelist, "playerWhitelist");
-            consoleWhitelist = immutablePatterns(consoleWhitelist, "consoleWhitelist");
+        public Functions {
+            if (maxFileChars < 1 || maxEntries < 1 || maxDescriptionChars < 1
+                    || maxArgumentChars < 1 || maxArgumentDepth < 1
+                    || maxArgumentMembers < 1 || maxValidationViolations < 1) {
+                throw new IllegalArgumentException("function limits must be positive");
+            }
         }
+    }
 
-        public boolean playerCommandAllowed(String normalizedCommand) {
-            return matches(playerWhitelist, normalizedCommand);
-        }
-
-        public boolean consoleCommandAllowed(String normalizedCommand) {
-            return matches(consoleWhitelist, normalizedCommand);
-        }
-
-        private static boolean matches(List<Pattern> patterns, String command) {
-            Objects.requireNonNull(command, "command");
-            return patterns.stream().anyMatch(pattern -> pattern.matcher(command).matches());
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            return other == this || other instanceof Commands commands
-                    && runEnabled == commands.runEnabled
-                    && patternSources(playerWhitelist).equals(patternSources(commands.playerWhitelist))
-                    && patternSources(consoleWhitelist).equals(patternSources(commands.consoleWhitelist));
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(runEnabled, patternSources(playerWhitelist), patternSources(consoleWhitelist));
-        }
-
-        private static List<String> patternSources(List<Pattern> patterns) {
-            return patterns.stream().map(Pattern::pattern).toList();
+    /** Resource and serialization limits for one declarative JavaScript workflow. */
+    public record JavaScript(
+            int maxSourceChars,
+            int maxOperationsPerInvocation,
+            int maxConcurrentOperations,
+            int maxPendingApprovals,
+            long maxSyncSegmentMillis,
+            long maxWorkflowMillis,
+            int maxResultChars,
+            int maxResultDepth,
+            int maxResultMembers
+    ) {
+        public JavaScript {
+            if (maxSourceChars < 1 || maxOperationsPerInvocation < 1
+                    || maxConcurrentOperations < 1 || maxPendingApprovals < 1
+                    || maxSyncSegmentMillis < 1L || maxWorkflowMillis < 1L
+                    || maxResultChars < 1 || maxResultDepth < 1 || maxResultMembers < 1) {
+                throw new IllegalArgumentException("javascript limits must be positive");
+            }
+            if (maxConcurrentOperations > maxOperationsPerInvocation) {
+                throw new IllegalArgumentException(
+                        "maxConcurrentOperations must not exceed maxOperationsPerInvocation");
+            }
+            if (maxPendingApprovals > maxConcurrentOperations) {
+                throw new IllegalArgumentException(
+                        "maxPendingApprovals must not exceed maxConcurrentOperations");
+            }
         }
     }
 
@@ -282,12 +254,4 @@ public record MineclawConfig(
         return Collections.unmodifiableSet(copy);
     }
 
-    private static List<Pattern> immutablePatterns(List<Pattern> source, String field) {
-        Objects.requireNonNull(source, field);
-        ArrayList<Pattern> copy = new ArrayList<>(source.size());
-        for (Pattern value : source) {
-            copy.add(Objects.requireNonNull(value, field + " entry"));
-        }
-        return List.copyOf(copy);
-    }
 }

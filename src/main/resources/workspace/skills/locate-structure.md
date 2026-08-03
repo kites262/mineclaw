@@ -13,7 +13,7 @@ triggers:
 本 Skill 只用于查找原版生成结构。命名传送点、玩家传送等其他能力需要各自的任务 Skill；当前 Workspace 未提供时，不要猜测命令。
 
 执行身份：`locate structure` **必须**用对话玩家 `player`（依赖当前位置与维度）。<br>
-执行任何 `run_command` 前，先按 `command-safety` 核对身份、白名单与结果语义。<br>
+调用任何 `run_command` 前，先按 `AGENTS.md` 核对身份、白名单与结果语义。<br>
 `command` 用全称（如 `locate structure <id>`，不要写缺 `structure` 的简写）。
 
 ## 命令

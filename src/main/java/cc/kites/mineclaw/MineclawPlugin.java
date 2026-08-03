@@ -3,13 +3,21 @@ package cc.kites.mineclaw;
 import cc.kites.mineclaw.api.ChatCompletionsClient;
 import cc.kites.mineclaw.approval.ApprovalManager;
 import cc.kites.mineclaw.command.MineclawCommand;
+import cc.kites.mineclaw.commandexec.BukkitCommandRuntime;
 import cc.kites.mineclaw.commandexec.CommandExecutor;
 import cc.kites.mineclaw.commandexec.CommandRootIndex;
 import cc.kites.mineclaw.commandexec.CommandRules;
+import cc.kites.mineclaw.commandexec.ScriptCommandDispatcher;
 import cc.kites.mineclaw.config.ConfigException;
-import cc.kites.mineclaw.config.ConfigStore;
+import cc.kites.mineclaw.config.ControlPlaneSnapshot;
+import cc.kites.mineclaw.config.ControlPlaneStore;
 import cc.kites.mineclaw.config.MineclawConfig;
+import cc.kites.mineclaw.function.FunctionCatalogLoader;
+import cc.kites.mineclaw.function.FunctionSourcePreparer;
+import cc.kites.mineclaw.javascript.JavaScriptLimits;
+import cc.kites.mineclaw.javascript.JavaScriptWorkflowRuntime;
 import cc.kites.mineclaw.listener.ApprovalGestureListener;
+import cc.kites.mineclaw.listener.InteractionLifecycleListener;
 import cc.kites.mineclaw.listener.PublicChatListener;
 import cc.kites.mineclaw.session.PublicSession;
 import cc.kites.mineclaw.session.RateLimiter;
@@ -18,10 +26,12 @@ import cc.kites.mineclaw.support.FoliaTasks;
 import cc.kites.mineclaw.support.MessageService;
 import cc.kites.mineclaw.support.PlayerChannel;
 import cc.kites.mineclaw.tool.EnvironmentTools;
+import cc.kites.mineclaw.tool.JavaScriptOperationRouter;
 import cc.kites.mineclaw.tool.ToolDispatcher;
 import cc.kites.mineclaw.tool.WorkspaceFileTools;
 import cc.kites.mineclaw.turn.TurnCoordinator;
 import cc.kites.mineclaw.workspace.ToolCatalogLoader;
+import cc.kites.mineclaw.workspace.SkillFunctionReferenceValidator;
 import cc.kites.mineclaw.workspace.WorkspaceService;
 import net.kyori.adventure.text.Component;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
@@ -36,6 +46,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,7 +58,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Independent Paper/Folia entry point for Mineclaw. */
 public final class MineclawPlugin extends JavaPlugin {
-    private ConfigStore configStore;
+    private ControlPlaneStore controlPlane;
     private PublicSession session;
     private RateLimiter rateLimiter;
     private FoliaTasks tasks;
@@ -55,9 +66,12 @@ public final class MineclawPlugin extends JavaPlugin {
     private PlayerChannel channel;
     private ApprovalManager approvals;
     private EnvironmentTools environmentTools;
+    private JavaScriptWorkflowRuntime javascriptRuntime;
+    private FunctionCatalogLoader functionCatalogLoader;
     private TurnCoordinator turns;
     private ExecutorService ioExecutor;
     private final AtomicBoolean reloading = new AtomicBoolean();
+    private final AtomicBoolean controlPlaneReady = new AtomicBoolean();
 
     @Override
     public void onEnable() {
@@ -72,6 +86,8 @@ public final class MineclawPlugin extends JavaPlugin {
             Files.createDirectories(root);
             ensureSecretFile(root.resolve(".env"));
             seedResource("config.yml");
+            seedResource("providers.yml");
+            seedResource("whitelist.yml");
             messages = new MessageService(this);
             messages.seed();
         } catch (IOException | RuntimeException exception) {
@@ -79,48 +95,70 @@ public final class MineclawPlugin extends JavaPlugin {
             return;
         }
 
-        configStore = new ConfigStore(root.resolve("config.yml"));
+        controlPlane = new ControlPlaneStore(root);
         MineclawConfig config;
         try {
-            config = configStore.loadInitial();
+            config = controlPlane.loadInitial().config();
+            controlPlaneReady.set(true);
         } catch (ConfigException exception) {
-            rejectEnable("Mineclaw configuration rejected", exception);
-            return;
+            config = controlPlane.initializeUnavailable().config();
+            getLogger().severe("Mineclaw control plane rejected; AI conversation is disabled until a "
+                    + "successful /mineclaw reload: " + safe(exception.getMessage()));
         }
         getLogger().setLevel(config.logging().level());
 
         try {
+            Path workspaceRoot = root.resolve("workspace");
             seedResource("tools.yml");
-            seedResource("skills/guide.md");
-            seedResource("skills/command-safety.md");
-            seedResource("skills/locate-structure.md");
+            seedResource("functions.yml");
+            seedResource("workspace/skills/locate-structure.md");
+            seedResource("workspace/skills/self-potion-effect.md");
             if (config.workspace().seedDefaults()) {
-                seedResource("AGENTS.md");
+                seedResource("workspace/AGENTS.md");
             }
 
-            WorkspaceService workspace = new WorkspaceService(root, getLogger());
+            AuditLogger audit = new AuditLogger(getLogger());
+            WorkspaceService workspace = new WorkspaceService(workspaceRoot, getLogger());
+            javascriptRuntime = createJavaScriptRuntime(config.javascript(), audit);
+            JavaScriptWorkflowRuntime availableJavaScript = javascriptRuntime;
             ToolCatalogLoader toolCatalog = new ToolCatalogLoader(getLogger()::warning);
             Path toolsFile = root.resolve("tools.yml");
-            WorkspaceFileTools fileTools = new WorkspaceFileTools(root);
+            Path functionsFile = root.resolve(FunctionCatalogLoader.FUNCTIONS_FILE_NAME);
+            FunctionSourcePreparer functionSourcePreparer = availableJavaScript == null
+                    ? FunctionSourcePreparer.unavailable() : availableJavaScript::validateSource;
+            functionCatalogLoader = new FunctionCatalogLoader(getLogger()::warning,
+                    functionSourcePreparer, Set.of(), functionLimits(config));
+            WorkspaceFileTools fileTools = new WorkspaceFileTools(workspaceRoot);
             environmentTools = new EnvironmentTools(getServer(), tasks);
             approvals = new ApprovalManager(tasks);
-            AuditLogger audit = new AuditLogger(getLogger());
             CommandRootIndex commandRoots = new CommandRootIndex();
             getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS,
                     event -> commandRoots.publish(event.registrar().getDispatcher()));
-            CommandExecutor commandExecutor = new CommandExecutor(getServer(), tasks, approvals, messages, audit,
-                    this::currentRules, ioExecutor, commandRoots);
-            ToolDispatcher dispatcher = new ToolDispatcher(fileTools, environmentTools, commandExecutor, ioExecutor);
-            turns = new TurnCoordinator(configStore, workspace, toolCatalog, toolsFile,
+            BukkitCommandRuntime commandRuntime = new BukkitCommandRuntime(
+                    getServer(), tasks, messages, ioExecutor, commandRoots);
+            CommandExecutor commandExecutor = new CommandExecutor(
+                    commandRuntime, approvals, audit, this::currentRules);
+            JavaScriptOperationRouter operationRouter = availableJavaScript == null ? null
+                    : new JavaScriptOperationRouter(commandRuntime, approvals.interactions(),
+                    new ScriptCommandDispatcher(commandRuntime, audit), audit,
+                    availableJavaScript::isActive);
+            ToolDispatcher dispatcher = new ToolDispatcher(fileTools, environmentTools, commandExecutor,
+                    ioExecutor, availableJavaScript, operationRouter, audit);
+            turns = new TurnCoordinator(controlPlane, root, workspace, toolCatalog, toolsFile,
+                    functionCatalogLoader, functionsFile,
                     new ChatCompletionsClient(), dispatcher, session, rateLimiter, messages, channel, tasks,
-                    ioExecutor, getLogger(), this::isEnabled);
+                    ioExecutor, getLogger(), () -> isEnabled() && controlPlaneReady.get());
 
             getServer().getPluginManager().registerEvents(
-                    new PublicChatListener(configStore, turns, messages, channel, tasks, ioExecutor), this);
+                    new PublicChatListener(controlPlane, turns, messages, channel, tasks, ioExecutor), this);
             getServer().getPluginManager().registerEvents(new ApprovalGestureListener(commandExecutor), this);
+            getServer().getPluginManager().registerEvents(new InteractionLifecycleListener(approvals), this);
             registerCommand("mineclaw", "Manage Mineclaw", List.of(),
-                    new MineclawCommand(configStore, turns, commandExecutor, toolCatalog, root, toolsFile,
-                            messages, channel, tasks, ioExecutor, this::reloadFromCommand));
+                    new MineclawCommand(controlPlane, turns, commandExecutor, toolCatalog,
+                            root, workspaceRoot, toolsFile,
+                            functionCatalogLoader, functionsFile, new SkillFunctionReferenceValidator(),
+                            messages, channel, tasks, ioExecutor, this::reloadFromCommand,
+                            availableJavaScript, audit, controlPlaneReady::get));
         } catch (IOException | RuntimeException exception) {
             rejectEnable("Mineclaw runtime initialization failed", exception);
             return;
@@ -131,6 +169,10 @@ public final class MineclawPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         HandlerList.unregisterAll(this);
+        // Close script admission and side-effect gates before any interaction completion can resume them.
+        if (javascriptRuntime != null) {
+            javascriptRuntime.close();
+        }
         if (turns != null) {
             turns.cancelAll();
         } else if (session != null) {
@@ -156,36 +198,36 @@ public final class MineclawPlugin extends JavaPlugin {
                     .thenAccept(message -> send(sender, message));
             return;
         }
-        // Freeze command dispatch for the entire parse/publish window and retire old approvals.
-        approvals.invalidatePending();
         CompletableFuture.supplyAsync(() -> {
             try {
-                return configStore.reload();
+                return controlPlane.reload();
             } catch (ConfigException exception) {
                 throw new CompletionException(exception);
             }
-        }, ioExecutor).whenComplete((config, failure) -> {
+        }, ioExecutor).whenComplete((snapshot, failure) -> {
             if (!isEnabled()) {
                 return;
             }
             if (failure == null) {
+                MineclawConfig config = snapshot.config();
                 getLogger().setLevel(config.logging().level());
-                approvals.invalidatePending();
+                if (functionCatalogLoader != null) {
+                    functionCatalogLoader.reconfigure(functionLimits(config));
+                }
+                if (javascriptRuntime != null) {
+                    javascriptRuntime.reconfigure(javascriptLimits(config.javascript()));
+                }
+                turns.resetModelOverride();
+                controlPlaneReady.set(true);
                 reloading.set(false);
                 send(sender, messages.render("reload_success"));
                 return;
             }
             Throwable cause = unwrap(failure);
-            getLogger().severe("Mineclaw configuration snapshot reload rejected; disabling plugin: "
+            getLogger().severe("Mineclaw control-plane reload rejected; keeping the previous snapshot: "
                     + safe(cause.getMessage()));
             send(sender, messages.render("reload_failure", Map.of("reason", safe(cause.getMessage()))));
-            if (turns != null) {
-                turns.cancelAll();
-            }
-            if (approvals != null) {
-                approvals.cancelAll();
-            }
-            tasks.global(() -> getServer().getPluginManager().disablePlugin(this));
+            reloading.set(false);
         });
     }
 
@@ -235,15 +277,53 @@ public final class MineclawPlugin extends JavaPlugin {
         }
     }
 
-    private static CommandRules rules(MineclawConfig config) {
-        return new CommandRules(config.commands().runEnabled(), config.commands().playerWhitelist(),
-                config.commands().consoleWhitelist());
+    private JavaScriptWorkflowRuntime createJavaScriptRuntime(
+            MineclawConfig.JavaScript settings,
+            AuditLogger audit
+    ) {
+        try {
+            return new JavaScriptWorkflowRuntime(javascriptLimits(settings), event -> {
+                LinkedHashMap<String, Object> fields = new LinkedHashMap<>();
+                fields.put("invocation_id", event.invocationId());
+                fields.put("function", event.functionName());
+                fields.put("script_hash", event.scriptHash());
+                fields.put("api_version", event.apiVersion());
+                fields.put("turn_player", event.playerName());
+                fields.put("operation", event.operation());
+                fields.put("bundled_action", event.action());
+                fields.put("phase", event.phase());
+                fields.put("result", event.status());
+                if (!event.reason().isBlank()) {
+                    fields.put("reason", event.reason());
+                }
+                audit.log("javascript.runtime", fields);
+            });
+        } catch (RuntimeException | LinkageError failure) {
+            getLogger().severe("GraalJS runtime is unavailable; JavaScript Functions will be unavailable: "
+                    + safe(failure.getMessage()));
+            return null;
+        }
+    }
+
+    private static JavaScriptLimits javascriptLimits(MineclawConfig.JavaScript settings) {
+        return new JavaScriptLimits(settings.maxSourceChars(), settings.maxOperationsPerInvocation(),
+                settings.maxConcurrentOperations(), settings.maxPendingApprovals(),
+                settings.maxSyncSegmentMillis(), settings.maxWorkflowMillis(), settings.maxResultChars(),
+                settings.maxResultDepth(), settings.maxResultMembers());
+    }
+
+    private static FunctionCatalogLoader.Limits functionLimits(MineclawConfig config) {
+        MineclawConfig.Functions functions = config.functions();
+        return new FunctionCatalogLoader.Limits(functions.maxFileChars(), functions.maxEntries(),
+                functions.maxDescriptionChars(), functions.maxArgumentChars(),
+                functions.maxArgumentDepth(), functions.maxArgumentMembers(),
+                functions.maxValidationViolations(), config.javascript().maxSourceChars());
     }
 
     private CommandRules currentRules() {
-        return reloading.get()
+        return reloading.get() || !controlPlaneReady.get()
                 ? new CommandRules(false, List.of(), List.of())
-                : rules(configStore.get());
+                : controlPlane.get().whitelist().rules();
     }
 
     private static String safe(String value) {

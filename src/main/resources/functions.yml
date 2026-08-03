@@ -1,0 +1,153 @@
+# Bundled, production-derived example: a reviewed vanilla workflow with strict arguments,
+# explicit capabilities, player approval and conservative command-result semantics.
+schema: 1
+api_version: 1
+functions:
+  - name: player.effect.give
+    description: 经当前玩家确认后，为其自身分发最长 300 秒的五种受限一级药水效果
+    enabled: true
+    capabilities:
+      - approval.request
+      - command.dispatch.console
+    parameters:
+      type: object
+      properties:
+        effect:
+          type: string
+          enum:
+            - minecraft:saturation
+            - minecraft:regeneration
+            - minecraft:haste
+            - minecraft:resistance
+            - minecraft:speed
+        duration_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+      required:
+        - effect
+        - duration_seconds
+      additionalProperties: false
+    on_call: |
+      async function onCall(ctx, api) {
+        const effectNames = {
+          "minecraft:saturation": "饱和",
+          "minecraft:regeneration": "生命恢复",
+          "minecraft:haste": "急迫",
+          "minecraft:resistance": "抗性提升",
+          "minecraft:speed": "速度"
+        };
+        const effect = ctx.args.effect;
+        const durationSeconds = ctx.args.duration_seconds;
+        const effectName = effectNames[effect];
+
+        const decision = await api.invoke({
+          action: "approval.request",
+          input: {
+            player: ctx.player.name,
+            interaction: {
+              type: "confirm",
+              title: "确认给予药水效果",
+              message:
+                `为你自己给予 ${effectName} I，持续 ${durationSeconds} 秒。`
+            },
+            timeout_ms: 60000
+          }
+        });
+
+        if (decision.status !== "approved") {
+          const decisionOutput = decision.output && typeof decision.output === "object"
+            ? decision.output
+            : {};
+          return {
+            status: decision.status === "invalid" ? "invalid" : "denied",
+            output: {
+              error_code: typeof decisionOutput.error_code === "string"
+                ? decisionOutput.error_code
+                : "approval_not_granted",
+              message: typeof decisionOutput.message === "string"
+                ? decisionOutput.message
+                : "当前玩家未批准给予药水效果",
+              approval_status: decision.status,
+              target_player: ctx.player.name,
+              effect: effect,
+              effect_name: effectName,
+              duration_seconds: durationSeconds,
+              level: 1
+            }
+          };
+        }
+
+        const dispatch = await api.invoke({
+          action: "command.dispatch",
+          input: {
+            executor: { type: "console" },
+            command:
+              `effect give ${ctx.player.name} ${effect} ${durationSeconds} 0 false`,
+            intent:
+              `为 ${ctx.player.name} 自身给予 ${effectName} I，持续 ${durationSeconds} 秒`
+          }
+        });
+
+        const dispatchOutput = dispatch.output && typeof dispatch.output === "object"
+          ? dispatch.output
+          : {};
+        const dispatchStatus = typeof dispatchOutput.dispatch_status === "string"
+          ? dispatchOutput.dispatch_status
+          : "not_started";
+        const executionResult = typeof dispatchOutput.execution_result === "string"
+          ? dispatchOutput.execution_result
+          : "not_started";
+
+        if (dispatch.status !== "dispatched") {
+          const finalStatus = dispatch.status === "invalid"
+            ? "invalid"
+            : dispatch.status === "denied" || dispatch.status === "cancelled"
+              ? "denied"
+              : "recoverable_error";
+          return {
+            status: finalStatus,
+            output: {
+              error_code: typeof dispatchOutput.error_code === "string"
+                ? dispatchOutput.error_code
+                : "effect_command_not_dispatched",
+              message: typeof dispatchOutput.message === "string"
+                ? dispatchOutput.message
+                : "药水效果命令未被分发",
+              approval_status: decision.status,
+              operation_status: dispatch.status,
+              dispatch_status: dispatchStatus,
+              execution_result: executionResult,
+              feedback: typeof dispatchOutput.feedback === "string"
+                ? dispatchOutput.feedback
+                : "",
+              executor: "console",
+              target_player: ctx.player.name,
+              effect: effect,
+              effect_name: effectName,
+              duration_seconds: durationSeconds,
+              level: 1
+            }
+          };
+        }
+
+        return {
+          status: "ok",
+          output: {
+            message: "药水效果命令已分发；实际效果以服务器执行结果为准",
+            effect: effect,
+            effect_name: effectName,
+            duration_seconds: durationSeconds,
+            level: 1,
+            approval_status: decision.status,
+            operation_status: dispatch.status,
+            dispatch_status: dispatchStatus,
+            execution_result: executionResult,
+            feedback: typeof dispatchOutput.feedback === "string"
+              ? dispatchOutput.feedback
+              : "",
+            executor: "console",
+            target_player: ctx.player.name
+          }
+        };
+      }

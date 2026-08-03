@@ -12,30 +12,30 @@ triggers:
 
 # KitesPlaces 传送点
 
-> **第三方集成示例：** 本文件仅适用于已安装并配置 KitesPlaces 的服务器，不会由 Mineclaw 写入默认 Workspace。使用前请将它复制到 Workspace 的 `skills/`，审核下方命令与权限，并在 `config.yml` 中启用命令执行、配置相应白名单。
+> **第三方集成示例：** 本文件仅适用于已安装并配置 KitesPlaces 的服务器，不会由 Mineclaw 写入默认 Workspace。使用前请将它复制到 Workspace 的 `skills/`，审核下方命令与权限，并把相应规则合并到 `whitelist.yml`。
 
 可审核后合并的最小白名单示例：
 
 ```yaml
-commands:
-  run_enabled: true
-  player_whitelist:
-    - '^kp warp (?:teleport|set) [^\s]+$'
-  console_whitelist:
-    - '^kp warp list$'
+schema: 1
+enabled: true
+player:
+  - '^kp warp (?:teleport|set) [^\s]+$'
+console:
+  - '^kp warp list$'
 ```
 
-`player_whitelist` 只会让当前对话玩家自己的匹配命令免于确认；指定其他玩家执行时，Mineclaw 仍会要求该玩家本人确认。
+`player` 规则只会让当前对话玩家自己的匹配命令免于确认；指定其他玩家执行时，Mineclaw 仍会要求该玩家本人确认。
 
 与原版结构定位无关：人为命名的传送点用本 Skill；「最近的末地城/要塞在哪」走 `locate-structure`。
 
-执行身份（与 AGENTS / `command-safety` 一致）：
+执行身份（与 Workspace `AGENTS.md` 一致）：
 
 - `kp warp set` → **只允许**使用当前对话玩家 `player`（依赖其位置/权限，且会覆盖传送点坐标）。
 - `kp warp teleport` → 默认使用当前对话玩家；仅当请求明确指定另一名在线玩家前往某个命名传送点时，先用 `online_players` 核对准确账号名，再把该玩家填入 `player`。跨玩家分发必须等待目标玩家本人确认。
 - `kp warp list` → **优先**控制台（`player: null`），以便 `run_command` 的 `feedback` 带回列表正文。
 
-执行任何 `run_command` 前，先按 `command-safety` 核对身份、白名单与结果语义。<br>
+执行任何 `run_command` 前，先按 `AGENTS.md` 核对身份、白名单与结果语义。<br>
 **本 Skill 必须整篇读完再下发**，尤其「允许的命令」「参数形状」「典型易错」三节；不要凭常见服务器习惯或玩家口语臆造命令。
 
 `command` **只用**全称 `kp warp …`；玩家口语 `/go` `/a` `/new` `/l` 只当意图线索，**禁止**作为 `run_command` 的 command（别名不在白名单内）。

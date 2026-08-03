@@ -18,6 +18,8 @@ import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -88,6 +90,7 @@ class ChatCompletionsClientTest {
 
         JsonObject sent = requestBody.get();
         assertThat(sent.get("model").getAsString()).isEqualTo("deepseek-v4-flash");
+        assertThat(sent.has("prompt_cache_key")).isFalse();
         assertThat(sent.get("stream").getAsBoolean()).isTrue();
         assertThat(sent.getAsJsonObject("stream_options").get("include_usage").getAsBoolean()).isTrue();
         assertThat(sent.getAsJsonArray("tools")).hasSize(1);
@@ -97,6 +100,46 @@ class ChatCompletionsClientTest {
         assertThat(messages.get(0).getAsJsonObject().get("content").getAsString()).isEqualTo("system rules");
         assertThat(messages.get(2).getAsJsonObject().getAsJsonArray("tool_calls")).hasSize(1);
         assertThat(messages.get(3).getAsJsonObject().get("tool_call_id").getAsString()).isEqualTo("old_call");
+    }
+
+    @Test
+    void insertsEnabledPromptCacheKeyAsATopLevelRequestField() {
+        AtomicReference<String> rawBody = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            rawBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 200, ordinaryResponse("cached"));
+        });
+        String cacheKey = "mineclaw:550e8400-e29b-41d4-a716-446655440000";
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                endpoint(), "mimo/mimo-v2.5", "mimo-v2.5", "system", List.of(), List.of(),
+                Duration.ofSeconds(2), 0, Duration.ZERO, 16_384, new JsonObject(),
+                Optional.empty(), Optional.of(cacheKey));
+
+        client().complete(request, "secret", IGNORE_STREAM).join();
+
+        JsonObject sent = JsonParser.parseString(rawBody.get()).getAsJsonObject();
+        assertThat(sent.get("prompt_cache_key").getAsString()).isEqualTo(cacheKey);
+        assertThat(rawBody.get().indexOf("\"prompt_cache_key\""))
+                .isLessThan(rawBody.get().indexOf("\"stream\""));
+    }
+
+    @Test
+    void usesStandardBearerHeaderForMimoModelReferences() {
+        AtomicReference<String> apiKey = new AtomicReference<>();
+        AtomicReference<String> authorization = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            apiKey.set(exchange.getRequestHeaders().getFirst("api-key"));
+            authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            respond(exchange, 200, ordinaryResponse("ok"));
+        });
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                endpoint(), "mimo/mimo-v2.5", "mimo-v2.5", "system rules", List.of(), List.of(),
+                Duration.ofSeconds(2), 0, Duration.ZERO, 8192, new JsonObject(), Optional.empty());
+
+        client().complete(request, "mimo-secret", IGNORE_STREAM).join();
+
+        assertThat(apiKey.get()).isNull();
+        assertThat(authorization).hasValue("Bearer mimo-secret");
     }
 
     @Test
@@ -190,6 +233,88 @@ class ChatCompletionsClientTest {
     }
 
     @Test
+    void sendsProviderToolsWithoutFunctionWrapping() {
+        AtomicReference<JsonObject> requestBody = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(JsonParser.parseString(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
+            respond(exchange, 200, ordinaryResponse("searched"));
+        });
+        JsonObject providerTool = JsonParser.parseString("""
+                {"type":"web_search","max_keyword":3,"force_search":true,"limit":1,
+                 "user_location":{"type":"approximate","country":"China","region":"Hubei","city":"Wuhan"}}
+                """).getAsJsonObject();
+
+        client().complete(request(List.of(ApiMessage.user("search")), List.of(providerTool), 0),
+                "secret", IGNORE_STREAM).join();
+
+        JsonObject sent = requestBody.get().getAsJsonArray("tools").get(0).getAsJsonObject();
+        assertThat(sent).isEqualTo(providerTool);
+        assertThat(sent.get("type").getAsString()).isEqualTo("web_search");
+        assertThat(sent.has("function")).isFalse();
+    }
+
+    @Test
+    void sendsModelLimitExtraBodyAndInterleavedAssistantField() {
+        AtomicReference<JsonObject> requestBody = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(JsonParser.parseString(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
+            respond(exchange, 200, """
+                    {"choices":[{"message":{"content":"ok","reasoning_content":"private"},
+                    "finish_reason":"stop"}]}
+                    """);
+        });
+        JsonObject extra = JsonParser.parseString("{\"thinking\":{\"type\":\"enabled\"}}")
+                .getAsJsonObject();
+        ApiMessage assistant = new ApiMessage("assistant", null,
+                List.of(new ToolCall("call-1", "look", "{}")), null,
+                Map.of("reasoning_content", "original-private"));
+        ChatCompletionRequest request = new ChatCompletionRequest(endpoint(), "mimo/mimo-v2.5",
+                "mimo-v2.5", "system", List.of(assistant, ApiMessage.tool("call-1", "{}")),
+                List.of(), Duration.ofSeconds(2), 0, Duration.ZERO, 8192, extra,
+                Optional.of("reasoning_content"));
+
+        ChatCompletionResult result = client().complete(request, "secret", IGNORE_STREAM).join();
+
+        JsonObject sent = requestBody.get();
+        assertThat(sent.get("model").getAsString()).isEqualTo("mimo-v2.5");
+        assertThat(sent.get("max_completion_tokens").getAsInt()).isEqualTo(8192);
+        assertThat(sent.getAsJsonObject("thinking").get("type").getAsString()).isEqualTo("enabled");
+        assertThat(sent.getAsJsonArray("messages").get(1).getAsJsonObject()
+                .get("reasoning_content").getAsString()).isEqualTo("original-private");
+        assertThat(result.interleavedValue()).isEqualTo("private");
+    }
+
+    @Test
+    void concatenatesStreamedInterleavedReasoningWithoutBroadcastingItAsContent() {
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
+            exchange.sendResponseHeaders(200, 0);
+            try (var output = exchange.getResponseBody()) {
+                output.write(("data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"a\"}}]}\n\n"
+                        + "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"b\"},"
+                        + "\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+        });
+        ChatCompletionRequest request = new ChatCompletionRequest(endpoint(), "mimo/mimo-v2.5",
+                "mimo-v2.5", "", List.of(), List.of(), Duration.ofSeconds(2), 0,
+                Duration.ZERO, 1, new JsonObject(), Optional.of("reasoning_content"));
+        StringBuilder visible = new StringBuilder();
+
+        ChatCompletionResult result = client().complete(request, "secret",
+                new ChatCompletionsClient.StreamObserver() {
+                    @Override public void onDelta(String delta) { visible.append(delta); }
+                    @Override public void onReset() { visible.setLength(0); }
+                }).join();
+
+        assertThat(result.interleavedValue()).isEqualTo("ab");
+        assertThat(result.content()).isEmpty();
+        assertThat(visible).isEmpty();
+    }
+
+    @Test
     void retries429AndServerErrorsWithInitialPlusMaxRetriesAttempts() {
         AtomicInteger attempts = new AtomicInteger();
         server.createContext("/v1/chat/completions", exchange -> {
@@ -264,6 +389,35 @@ class ChatCompletionsClientTest {
                 .isInstanceOf(CompletionException.class)
                 .hasCauseInstanceOf(ChatCompletionException.class)
                 .hasMessageNotContaining("never-print-this");
+        assertThat(attempts).hasValue(1);
+    }
+
+    @Test
+    void retainsSanitizedProviderErrorDetailsWithoutRetryingHttp400() {
+        AtomicInteger attempts = new AtomicInteger();
+        server.createContext("/v1/chat/completions", exchange -> {
+            attempts.incrementAndGet();
+            exchange.getResponseHeaders().set("x-request-id", "request-123");
+            respond(exchange, 400, """
+                    {"error":{"code":"bad_schema","type":"invalid_request","param":"thinking",
+                    "message":"invalid option"},"api_key":"TOP_SECRET","messages":["PRIVATE"],
+                    "reasoning_content":"PRIVATE_REASONING"}
+                    """);
+        });
+
+        Throwable cause = org.assertj.core.api.Assertions.catchThrowable(() ->
+                client().complete(request(List.of(), List.of(), 3), "credential", IGNORE_STREAM).join());
+        assertThat(cause).isInstanceOf(CompletionException.class);
+        ChatCompletionException failure = (ChatCompletionException) cause.getCause();
+        assertThat(failure.statusCode()).isEqualTo(400);
+        assertThat(failure.retryable()).isFalse();
+        assertThat(failure.requestId()).isEqualTo("request-123");
+        assertThat(failure.providerCode()).isEqualTo("bad_schema");
+        assertThat(failure.providerType()).isEqualTo("invalid_request");
+        assertThat(failure.providerParam()).isEqualTo("thinking");
+        assertThat(failure.providerMessage()).isEqualTo("invalid option");
+        assertThat(failure.sanitizedBody()).contains("<redacted>")
+                .doesNotContain("TOP_SECRET", "PRIVATE", "PRIVATE_REASONING", "credential");
         assertThat(attempts).hasValue(1);
     }
 

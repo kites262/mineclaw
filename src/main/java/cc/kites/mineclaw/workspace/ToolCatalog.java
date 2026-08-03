@@ -25,13 +25,17 @@ public record ToolCatalog(List<ToolDefinition> definitions, List<String> diagnos
         return definitions.stream().filter(tool -> tool.status() == ToolDefinition.Status.INVALID).toList();
     }
 
-    public Optional<ToolDefinition> find(String name) {
-        Objects.requireNonNull(name, "name");
-        return definitions.stream().filter(tool -> tool.name().equals(name)).findFirst();
+    public Optional<ToolDefinition> find(String handler) {
+        Objects.requireNonNull(handler, "handler");
+        return definitions.stream().filter(tool -> tool.handler().equals(handler)).findFirst();
     }
 
-    public Optional<ToolDefinition> findEnabled(String name) {
-        return find(name).filter(ToolDefinition::available);
+    public Optional<ToolDefinition> findEnabled(String handler) {
+        Objects.requireNonNull(handler, "handler");
+        return definitions.stream()
+                .filter(tool -> tool.handler().equals(handler))
+                .filter(ToolDefinition::available)
+                .findFirst();
     }
 
     public JsonArray toChatCompletionsTools() {

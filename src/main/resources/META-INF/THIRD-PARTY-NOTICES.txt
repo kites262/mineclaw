@@ -7,5 +7,23 @@ Mineclaw embeds the following third-party software:
 - Error Prone annotations 2.48.0, Copyright 2015 The Error Prone Authors
   https://github.com/google/error-prone
 
-Each component above is licensed under the Apache License, Version 2.0.
-The complete license text is included as META-INF/LICENSE-APACHE-2.0.txt.
+The components above are licensed under the Apache License, Version 2.0.
+The complete text is included as META-INF/LICENSE-APACHE-2.0.txt.
+
+- GraalVM Polyglot, SDK, Truffle, GraalJS and TRegex 25.2.4,
+  including the collections, nativeimage, word, jniutils, truffle-api,
+  truffle-runtime, truffle-compiler, js-language, regex and shadowed xz artifacts.
+  Copyright (c) Oracle and/or its affiliates.
+  https://www.graalvm.org/
+
+These GraalVM components are licensed under the Universal Permissive License,
+Version 1.0. The exact GraalJS 25.2.4 license, written offer, and third-party
+notices are included as META-INF/LICENSE-GRAALJS.txt and
+META-INF/THIRD-PARTY-LICENSE-GRAALJS.txt.
+
+- GraalVM shadowed ICU4J 25.2.4, derived from ICU and Unicode data.
+  Copyright (c) Unicode, Inc. and others.
+  https://icu.unicode.org/
+
+ICU, its Unicode data and its bundled third-party portions are distributed under
+the terms and notices reproduced in META-INF/LICENSE-UNICODE-ICU.txt.

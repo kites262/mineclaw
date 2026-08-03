@@ -5,14 +5,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
-import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WorkspaceFileToolsTest {
     private static final WorkspaceFileTools.Limits LIMITS =
@@ -22,153 +18,38 @@ class WorkspaceFileToolsTest {
     Path root;
 
     @Test
-    void listsSensitiveFilesButProtectsTheirContentsFromReadAndGrep() throws IOException {
+    void workspaceRootNaturallyExcludesSiblingConfigurationFiles() throws IOException {
         Files.writeString(root.resolve("config.yml"), "api_key: config-secret");
         Files.writeString(root.resolve(".env"), "MINECLAW_API_KEY=env-secret");
-        Files.createDirectories(root.resolve("skills"));
-        Files.writeString(root.resolve("skills/guide.md"), "name: guide\nneedle here\n");
-        WorkspaceFileTools tools = new WorkspaceFileTools(root);
-
-        for (String path : List.of("./config.yml", "secrets/../.env", ".env/nested")) {
-            JsonObject read = new JsonObject();
-            read.addProperty("path", path);
-            ToolResult protectedResult = tools.read(read, LIMITS);
-            assertThat(protectedResult.status()).isEqualTo("denied");
-            assertThat(protectedResult.output().get("status").getAsString()).isEqualTo("protected");
-            assertThat(protectedResult.output().get("content").getAsString())
-                    .isEqualTo(WorkspaceFileTools.PROTECTED_CONTENT);
-        }
+        Files.writeString(root.resolve("functions.yml"), "on_call: function-secret");
+        Path workspace = Files.createDirectories(root.resolve("workspace"));
+        Files.createDirectories(workspace.resolve("skills"));
+        Files.writeString(workspace.resolve("AGENTS.md"), "agent instructions");
+        Files.writeString(workspace.resolve("config.yml"), "ordinary workspace document");
+        Files.writeString(workspace.resolve("skills/guide.md"), "needle here");
+        WorkspaceFileTools tools = new WorkspaceFileTools(workspace);
 
         JsonObject list = new JsonObject();
         list.addProperty("depth", 3);
-        ToolResult listResult = tools.list(list, LIMITS);
-        assertThat(listResult.json())
-                .contains("config.yml", ".env", "skills/guide.md")
-                .doesNotContain("config-secret", "env-secret");
-        for (String path : List.of("config.yml", ".env")) {
-            JsonObject item = findListedItem(listResult, path);
-            assertThat(item.get("protected").getAsBoolean()).isTrue();
-            assertThat(item.has("size")).isFalse();
-        }
-        assertThat(findListedItem(listResult, "skills/guide.md").get("protected").getAsBoolean()).isFalse();
+        ToolResult listed = tools.list(list, LIMITS);
+        assertThat(listed.json())
+                .contains("AGENTS.md", "config.yml", "skills/guide.md")
+                .doesNotContain("config-secret", "env-secret", "function-secret", "protected");
+        assertThat(findListedItem(listed, "AGENTS.md").keySet())
+                .containsExactlyInAnyOrder("path", "type", "size");
+
+        JsonObject workspaceConfig = new JsonObject();
+        workspaceConfig.addProperty("path", "config.yml");
+        assertThat(tools.read(workspaceConfig, LIMITS).output().get("content").getAsString())
+                .isEqualTo("ordinary workspace document");
+
+        JsonObject read = new JsonObject();
+        read.addProperty("path", "../config.yml");
+        assertThat(tools.read(read, LIMITS).status()).isEqualTo("denied");
 
         JsonObject grep = new JsonObject();
         grep.addProperty("pattern", "secret");
         assertThat(tools.grep(grep, LIMITS).output().getAsJsonArray("matches")).isEmpty();
-
-        for (String path : List.of("config.yml", ".env", ".env/nested")) {
-            grep.addProperty("path", path);
-            ToolResult result = tools.grep(grep, LIMITS);
-            assertThat(result.status()).isEqualTo("ok");
-            assertThat(result.output().getAsJsonArray("matches")).isEmpty();
-        }
-
-        Files.delete(root.resolve("config.yml"));
-        Files.delete(root.resolve(".env"));
-        for (String path : List.of("config.yml", ".env")) {
-            JsonObject read = new JsonObject();
-            read.addProperty("path", path);
-            assertThat(tools.read(read, LIMITS).output().get("status").getAsString()).isEqualTo("protected");
-        }
-    }
-
-    @Test
-    void protectsSensitiveFilesThroughSymbolicAndHardLinkAliases() throws IOException {
-        Path config = root.resolve("config.yml");
-        Path environment = root.resolve(".env");
-        Files.writeString(config, "shared-secret");
-        Files.writeString(environment, "shared-secret");
-        Path configSymlink = root.resolve("config-alias.yml");
-        Path environmentHardLink = root.resolve("environment-copy");
-        try {
-            Files.createSymbolicLink(configSymlink, config.getFileName());
-            Files.createLink(environmentHardLink, environment);
-        } catch (UnsupportedOperationException exception) {
-            return;
-        }
-        WorkspaceFileTools tools = new WorkspaceFileTools(root);
-
-        for (String path : List.of("config-alias.yml", "environment-copy")) {
-            JsonObject read = new JsonObject();
-            read.addProperty("path", path);
-            assertThat(tools.read(read, LIMITS).output().get("status").getAsString()).isEqualTo("protected");
-
-            JsonObject grep = new JsonObject();
-            grep.addProperty("path", path);
-            grep.addProperty("pattern", "shared-secret");
-            assertThat(tools.grep(grep, LIMITS).output().getAsJsonArray("matches")).isEmpty();
-        }
-
-        JsonObject grepRoot = new JsonObject();
-        grepRoot.addProperty("pattern", "shared-secret");
-        assertThat(tools.grep(grepRoot, LIMITS).output().getAsJsonArray("matches")).isEmpty();
-    }
-
-    @Test
-    void protectsOnlyExactSensitiveFiles() throws IOException {
-        Files.writeString(root.resolve("config.yml.example"), "public config example");
-        Files.writeString(root.resolve(".env.example"), "public env example");
-        WorkspaceFileTools tools = new WorkspaceFileTools(root);
-
-        for (String path : List.of("config.yml.example", ".env.example")) {
-            JsonObject read = new JsonObject();
-            read.addProperty("path", path);
-            assertThat(tools.read(read, LIMITS).output().get("content").getAsString()).contains("example");
-        }
-    }
-
-    @Test
-    void mutationGuardRejectsMissingNamesAliasesAndContainingPaths() throws IOException {
-        Path config = root.resolve("config.yml");
-        Files.writeString(config, "secret");
-        Path hardLink = root.resolve("hard-link");
-        Path rootAlias = root.resolve("root-alias");
-        try {
-            Files.createLink(hardLink, config);
-            Files.createSymbolicLink(rootAlias, Path.of("."));
-        } catch (UnsupportedOperationException exception) {
-            return;
-        }
-        WorkspaceFileTools tools = new WorkspaceFileTools(root);
-
-        for (String path : List.of("config.yml", "./.env", "missing/../.env", "hard-link",
-                "root-alias/.env", ".env/nested", "")) {
-            assertThatThrownBy(() -> tools.requireMutationAllowed(path))
-                    .as("mutation path %s", path)
-                    .isInstanceOf(AccessDeniedException.class);
-        }
-        assertThatThrownBy(() -> tools.requireMutationAllowed("../outside"))
-                .isInstanceOf(AccessDeniedException.class);
-
-        assertThatCode(() -> tools.requireMutationAllowed("skills/new.md")).doesNotThrowAnyException();
-        Files.writeString(root.resolve("ordinary.txt"), "ordinary");
-        assertThatCode(() -> tools.requireMutationAllowed("ordinary.txt")).doesNotThrowAnyException();
-    }
-
-    @Test
-    void mutationGuardRejectsParentsOfProtectedSymlinkTargets() throws IOException {
-        Path configTarget = root.resolve("private/config.actual");
-        Path environmentTarget = root.resolve("secrets/environment.actual");
-        Files.createDirectories(configTarget.getParent());
-        Files.createDirectories(environmentTarget.getParent());
-        Files.writeString(configTarget, "config-secret");
-        Files.writeString(environmentTarget, "environment-secret");
-        try {
-            Files.createSymbolicLink(root.resolve("config.yml"), root.relativize(configTarget));
-            Files.createSymbolicLink(root.resolve(".env"), root.relativize(environmentTarget));
-        } catch (UnsupportedOperationException exception) {
-            return;
-        }
-        WorkspaceFileTools tools = new WorkspaceFileTools(root);
-
-        for (String path : List.of("private", "private/config.actual",
-                "secrets", "secrets/environment.actual")) {
-            assertThatThrownBy(() -> tools.requireMutationAllowed(path))
-                    .as("mutation path %s", path)
-                    .isInstanceOf(AccessDeniedException.class);
-        }
-        assertThatCode(() -> tools.requireMutationAllowed("private/unrelated.txt"))
-                .doesNotThrowAnyException();
     }
 
     @Test

@@ -6,8 +6,6 @@ import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -16,42 +14,34 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /** Strict schema-1 config.yml parser backed by Bukkit's {@link YamlConfiguration}. */
 public final class ConfigLoader {
-    private final Function<String, String> processEnvironment;
-
-    public ConfigLoader() {
-        this(System::getenv);
-    }
-
-    public ConfigLoader(Function<String, String> processEnvironment) {
-        this.processEnvironment = Objects.requireNonNull(processEnvironment, "processEnvironment");
-    }
-
     public MineclawConfig load(Path path) throws ConfigException {
         Objects.requireNonNull(path, "path");
-        YamlConfiguration yaml = new YamlConfiguration();
-        try {
-            yaml.load(path.toFile());
-        } catch (InvalidConfigurationException exception) {
-            // SnakeYAML diagnostics may embed the offending source line, including api.api_key.
-            throw new ConfigException(path.getFileName() + " contains invalid YAML");
-        } catch (IOException exception) {
-            throw new ConfigException("Cannot read " + path.getFileName(), exception);
-        }
         Path absolute = path.toAbsolutePath().normalize();
         Path parent = absolute.getParent();
-        Path dotEnv = parent == null ? Path.of(".env").toAbsolutePath().normalize() : parent.resolve(".env");
-        return parse(yaml, new ReferenceResolver(processEnvironment, DotEnvLoader.load(dotEnv)));
+        if (parent == null) {
+            throw new ConfigException("config.yml must have a parent directory");
+        }
+        final String source;
+        try {
+            source = new cc.kites.mineclaw.workspace.WorkspacePathSecurity(parent)
+                    .readFixedUtf8(absolute, "config.yml");
+        } catch (IOException exception) {
+            throw new ConfigException("Cannot safely read config.yml", exception);
+        }
+        return parse(source);
     }
 
     public MineclawConfig parse(String yamlText) throws ConfigException {
         Objects.requireNonNull(yamlText, "yamlText");
+        // Validate through the same JSON-safe, duplicate-key/alias/tag rejecting boundary as
+        // providers.yml and whitelist.yml before Bukkit maps scalar values into sections.
+        StrictYaml.parse(yamlText, "config.yml");
         YamlConfiguration yaml = new YamlConfiguration();
         try {
             yaml.loadFromString(yamlText);
@@ -63,13 +53,15 @@ public final class ConfigLoader {
     }
 
     public MineclawConfig parse(ConfigurationSection yaml) throws ConfigException {
-        return parse(yaml, ReferenceResolver.literalOnly());
-    }
-
-    private MineclawConfig parse(ConfigurationSection yaml, ReferenceResolver references) throws ConfigException {
         Objects.requireNonNull(yaml, "yaml");
-        Objects.requireNonNull(references, "references");
         validateSectionShapes(yaml);
+        validateKnownFields(yaml);
+        if (yaml.contains("api")) {
+            throw invalid("api", "is a legacy section; configure providers.yml");
+        }
+        if (yaml.contains("commands")) {
+            throw invalid("commands", "is a legacy section; configure whitelist.yml");
+        }
         MineclawConfig defaults = MineclawConfig.defaults();
 
         int schema = integer(yaml, "schema", defaults.schema());
@@ -77,27 +69,9 @@ public final class ConfigLoader {
             throw invalid("schema", "must be " + MineclawConfig.SCHEMA);
         }
 
-        MineclawConfig.Api apiDefaults = defaults.api();
-        String baseUrlText = references.resolve(
-                string(yaml, "api.base_url", apiDefaults.baseUrl().toString()), "api.base_url");
-        URI baseUrl = uri(nonBlank(baseUrlText, "api.base_url"), "api.base_url");
-        String apiKey = references.resolve(
-                string(yaml, "api.api_key", apiDefaults.apiKey()), "api.api_key");
-        String model = model(references.resolve(
-                string(yaml, "api.model", apiDefaults.model()), "api.model"));
-        long timeout = boundedPositiveLong(
-                yaml, "api.timeout", apiDefaults.timeoutMillis(), 86_400_000L);
-        int maxRetries = boundedNonNegativeInt(
-                yaml, "api.max_retries", apiDefaults.maxRetries(), 20);
-        long retryBackoff = boundedPositiveLong(
-                yaml, "api.retry_backoff_ms", apiDefaults.retryBackoffMillis(), 3_600_000L);
-        MineclawConfig.Api api = new MineclawConfig.Api(
-                baseUrl, apiKey, model, timeout, maxRetries, retryBackoff);
-
         MineclawConfig.Context contextDefaults = defaults.context();
         MineclawConfig.Context context = new MineclawConfig.Context(
-                positiveInt(yaml, "context.max_messages", contextDefaults.maxMessages()),
-                positiveInt(yaml, "context.max_tokens", contextDefaults.maxTokens()));
+                positiveInt(yaml, "context.max_messages", contextDefaults.maxMessages()));
 
         MineclawConfig.Chat chatDefaults = defaults.chat();
         String publicPrefix = string(yaml, "chat.public_prefix", chatDefaults.publicPrefix());
@@ -120,13 +94,54 @@ public final class ConfigLoader {
                 normalizedNames(strings(yaml, "tools.disabled", List.copyOf(toolsDefaults.disabled())),
                         "tools.disabled"));
 
-        MineclawConfig.Commands commandDefaults = defaults.commands();
-        MineclawConfig.Commands commands = new MineclawConfig.Commands(
-                bool(yaml, "commands.run_enabled", commandDefaults.runEnabled()),
-                patterns(strings(yaml, "commands.player_whitelist", patternSources(commandDefaults.playerWhitelist())),
-                        "commands.player_whitelist"),
-                patterns(strings(yaml, "commands.console_whitelist", patternSources(commandDefaults.consoleWhitelist())),
-                        "commands.console_whitelist"));
+        MineclawConfig.Functions functionDefaults = defaults.functions();
+        MineclawConfig.Functions functions = new MineclawConfig.Functions(
+                boundedPositiveInt(yaml, "functions.max_file_chars",
+                        functionDefaults.maxFileChars(), 16_000_000),
+                boundedPositiveInt(yaml, "functions.max_entries",
+                        functionDefaults.maxEntries(), 10_000),
+                boundedPositiveInt(yaml, "functions.max_description_chars",
+                        functionDefaults.maxDescriptionChars(), 512),
+                boundedPositiveInt(yaml, "functions.max_argument_chars",
+                        functionDefaults.maxArgumentChars(), 1_000_000),
+                boundedPositiveInt(yaml, "functions.max_argument_depth",
+                        functionDefaults.maxArgumentDepth(), 64),
+                boundedPositiveInt(yaml, "functions.max_argument_members",
+                        functionDefaults.maxArgumentMembers(), 100_000),
+                boundedPositiveInt(yaml, "functions.max_validation_violations",
+                        functionDefaults.maxValidationViolations(), 1_024));
+
+        MineclawConfig.JavaScript javascriptDefaults = defaults.javascript();
+        int maxOperations = boundedPositiveInt(yaml, "javascript.max_operations_per_invocation",
+                javascriptDefaults.maxOperationsPerInvocation(), 10_000);
+        int maxConcurrent = boundedPositiveInt(yaml, "javascript.max_concurrent_operations",
+                javascriptDefaults.maxConcurrentOperations(), 1_024);
+        if (maxConcurrent > maxOperations) {
+            throw invalid("javascript.max_concurrent_operations",
+                    "must not exceed javascript.max_operations_per_invocation");
+        }
+        int maxApprovals = boundedPositiveInt(yaml, "javascript.max_pending_approvals",
+                javascriptDefaults.maxPendingApprovals(), 1_024);
+        if (maxApprovals > maxConcurrent) {
+            throw invalid("javascript.max_pending_approvals",
+                    "must not exceed javascript.max_concurrent_operations");
+        }
+        MineclawConfig.JavaScript javascript = new MineclawConfig.JavaScript(
+                boundedPositiveInt(yaml, "javascript.max_source_chars",
+                        javascriptDefaults.maxSourceChars(), 1_000_000),
+                maxOperations,
+                maxConcurrent,
+                maxApprovals,
+                boundedPositiveLong(yaml, "javascript.max_sync_segment_ms",
+                        javascriptDefaults.maxSyncSegmentMillis(), 60_000L),
+                boundedPositiveLong(yaml, "javascript.max_workflow_ms",
+                        javascriptDefaults.maxWorkflowMillis(), 86_400_000L),
+                boundedPositiveInt(yaml, "javascript.max_result_chars",
+                        javascriptDefaults.maxResultChars(), 1_000_000),
+                boundedPositiveInt(yaml, "javascript.max_result_depth",
+                        javascriptDefaults.maxResultDepth(), 64),
+                boundedPositiveInt(yaml, "javascript.max_result_members",
+                        javascriptDefaults.maxResultMembers(), 100_000));
 
         MineclawConfig.RateLimit rateDefaults = defaults.rateLimit();
         MineclawConfig.RateLimit rateLimit = new MineclawConfig.RateLimit(
@@ -173,78 +188,55 @@ public final class ConfigLoader {
             throw invalid("logging.level", "unknown java.util.logging level " + rawLevel, exception);
         }
 
-        return new MineclawConfig(schema, api, context, chat, tools, commands, rateLimit, workspace,
+        return new MineclawConfig(schema, context, chat, tools, functions, javascript, rateLimit, workspace,
                 fileTools, turn, identity, environment, new MineclawConfig.Logging(level));
     }
 
-    private static URI uri(String raw, String path) throws ConfigException {
-        URI value;
-        try {
-            value = new URI(raw);
-        } catch (URISyntaxException exception) {
-            throw invalid(path, "must be a valid absolute HTTP(S) URI");
-        }
-        String scheme = value.getScheme();
-        if (!value.isAbsolute() || scheme == null
-                || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))
-                || value.getHost() == null || value.getUserInfo() != null || value.getFragment() != null) {
-            throw invalid(path, "must be an absolute HTTP(S) URI");
-        }
-        return value;
-    }
-
-    private static String model(String raw) throws ConfigException {
-        String value = nonBlank(raw, "api.model");
-        if (value.length() > 256) {
-            throw invalid("api.model", "must not exceed 256 characters");
-        }
-        if (value.codePoints().anyMatch(character -> Character.isWhitespace(character)
-                || Character.isISOControl(character))) {
-            throw invalid("api.model", "must not contain whitespace or control characters");
-        }
-        return value;
-    }
-
-    private record ReferenceResolver(Function<String, String> processEnvironment,
-                                     MineclawConfig.SecretEnvironment fileEnvironment) {
-        private ReferenceResolver {
-            Objects.requireNonNull(processEnvironment, "processEnvironment");
-            Objects.requireNonNull(fileEnvironment, "fileEnvironment");
-        }
-
-        private static ReferenceResolver literalOnly() {
-            return new ReferenceResolver(name -> null, MineclawConfig.SecretEnvironment.empty());
-        }
-
-        private String resolve(String configured, String path) throws ConfigException {
-            String candidate = configured.trim();
-            if (!MineclawConfig.SecretEnvironment.validName(candidate)) {
-                return candidate;
-            }
-            String processValue = process(candidate, path);
-            if (processValue != null) {
-                return processValue.trim();
-            }
-            String fileValue = fileEnvironment.get(candidate);
-            return fileValue == null ? candidate : fileValue.trim();
-        }
-
-        private String process(String variableName, String path) throws ConfigException {
-            try {
-                return processEnvironment.apply(variableName);
-            } catch (RuntimeException exception) {
-                throw invalid(path, "cannot access the process environment");
-            }
-        }
-    }
-
     private static void validateSectionShapes(ConfigurationSection yaml) throws ConfigException {
-        for (String path : List.of("api", "context", "chat", "tools", "commands", "rate_limit",
+        for (String path : List.of("context", "chat", "tools", "functions", "javascript", "rate_limit",
                 "workspace", "workspace.max_chars", "file_tools", "turn", "identity", "environment",
                 "environment.inventory", "logging")) {
             Object value = yaml.get(path);
             if (value != null && !(value instanceof ConfigurationSection)) {
                 throw invalid(path, "must be a mapping");
+            }
+        }
+    }
+
+    private static void validateKnownFields(ConfigurationSection yaml) throws ConfigException {
+        exactFields(yaml, "", Set.of("schema", "api", "commands", "context", "chat", "tools",
+                "functions", "javascript", "rate_limit", "workspace", "file_tools", "turn",
+                "identity", "environment", "logging"));
+        exactFields(yaml, "context", Set.of("max_messages"));
+        exactFields(yaml, "chat", Set.of("public_prefix", "wake_pattern", "reply_max_chars",
+                "actionbar_max_chars"));
+        exactFields(yaml, "tools", Set.of("enabled", "disabled"));
+        exactFields(yaml, "functions", Set.of("max_file_chars", "max_entries", "max_description_chars",
+                "max_argument_chars", "max_argument_depth", "max_argument_members",
+                "max_validation_violations"));
+        exactFields(yaml, "javascript", Set.of("max_source_chars", "max_operations_per_invocation",
+                "max_concurrent_operations", "max_pending_approvals", "max_sync_segment_ms",
+                "max_workflow_ms", "max_result_chars", "max_result_depth", "max_result_members"));
+        exactFields(yaml, "rate_limit", Set.of("player_cooldown_ms", "global_cooldown_ms"));
+        exactFields(yaml, "workspace", Set.of("seed_defaults", "max_chars"));
+        exactFields(yaml, "workspace.max_chars", Set.of("agents"));
+        exactFields(yaml, "file_tools", Set.of("max_read_chars", "max_results", "max_depth", "timeout"));
+        exactFields(yaml, "turn", Set.of("max_tool_rounds", "max_tool_calls"));
+        exactFields(yaml, "identity", Set.of("name"));
+        exactFields(yaml, "environment", Set.of("look_distance", "tool_cooldown_ms", "inventory"));
+        exactFields(yaml, "environment.inventory", Set.of("include_equipment", "max_slots"));
+        exactFields(yaml, "logging", Set.of("level"));
+    }
+
+    private static void exactFields(ConfigurationSection root, String path, Set<String> allowed)
+            throws ConfigException {
+        ConfigurationSection section = path.isEmpty() ? root : root.getConfigurationSection(path);
+        if (section == null) {
+            return;
+        }
+        for (String field : section.getKeys(false)) {
+            if (!allowed.contains(field)) {
+                throw invalid(path.isEmpty() ? field : path + '.' + field, "is not a supported field");
             }
         }
     }
@@ -261,24 +253,12 @@ public final class ConfigLoader {
         return result;
     }
 
-    private static List<Pattern> patterns(List<String> values, String path) throws ConfigException {
-        ArrayList<Pattern> result = new ArrayList<>(values.size());
-        for (int index = 0; index < values.size(); index++) {
-            result.add(pattern(values.get(index), path + '[' + index + ']'));
-        }
-        return List.copyOf(result);
-    }
-
     private static Pattern pattern(String value, String path) throws ConfigException {
         try {
             return Pattern.compile(value);
         } catch (PatternSyntaxException exception) {
             throw invalid(path, "invalid regular expression: " + exception.getDescription(), exception);
         }
-    }
-
-    private static List<String> patternSources(List<Pattern> patterns) {
-        return patterns.stream().map(Pattern::pattern).toList();
     }
 
     private static String nonBlank(String value, String path) throws ConfigException {
