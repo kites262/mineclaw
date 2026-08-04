@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -100,6 +101,89 @@ class ChatCompletionsClientTest {
         assertThat(messages.get(0).getAsJsonObject().get("content").getAsString()).isEqualTo("system rules");
         assertThat(messages.get(2).getAsJsonObject().getAsJsonArray("tool_calls")).hasSize(1);
         assertThat(messages.get(3).getAsJsonObject().get("tool_call_id").getAsString()).isEqualTo("old_call");
+    }
+
+    @Test
+    void debugLogsEveryAttemptWithOnlyLongMessageTextTruncated() {
+        AtomicInteger attempts = new AtomicInteger();
+        List<JsonObject> sentBodies = new CopyOnWriteArrayList<>();
+        List<String> debugLogs = new CopyOnWriteArrayList<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            sentBodies.add(JsonParser.parseString(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
+            if (attempts.incrementAndGet() == 1) {
+                respond(exchange, 503, "{\"error\":{\"type\":\"server_error\"}}");
+            } else {
+                respond(exchange, 200, ordinaryResponse("ok"));
+            }
+        });
+
+        String system = "系".repeat(99) + "😀tail";
+        String user = "u".repeat(101);
+        String reasoning = "r".repeat(101);
+        String arguments = "{\"payload\":\"" + "a".repeat(140) + "\"}";
+        JsonObject providerTool = new JsonObject();
+        providerTool.addProperty("type", "web_search");
+        providerTool.addProperty("description", "d".repeat(140));
+        JsonObject extra = new JsonObject();
+        extra.addProperty("custom_parameter", "p".repeat(140));
+        ApiMessage assistant = new ApiMessage("assistant", null,
+                List.of(new ToolCall("call-1", "lookup", arguments)), null,
+                Map.of("reasoning_content", reasoning));
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                endpoint(), "test/model", "upstream-model", system,
+                List.of(ApiMessage.user(user), assistant), List.of(providerTool),
+                Duration.ofSeconds(2), 1, Duration.ofMillis(1), 512,
+                extra, Optional.empty(), Optional.empty(), true);
+        ChatCompletionsClient client = new ChatCompletionsClient(HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2)).build(), debugLogs::add);
+
+        client.complete(request, "never-log-this-secret", IGNORE_STREAM).join();
+
+        assertThat(attempts).hasValue(2);
+        assertThat(debugLogs).hasSize(2);
+        assertThat(debugLogs.get(0)).contains("attempt=1", "model=test/model");
+        assertThat(debugLogs.get(1)).contains("attempt=2", "model=test/model");
+        assertThat(debugLogs).allSatisfy(log -> assertThat(log).doesNotContain("never-log-this-secret"));
+
+        int bodyOffset = debugLogs.getFirst().indexOf(" body=") + " body=".length();
+        JsonObject logged = JsonParser.parseString(debugLogs.getFirst().substring(bodyOffset)).getAsJsonObject();
+        JsonArray loggedMessages = logged.getAsJsonArray("messages");
+        assertThat(loggedMessages.get(0).getAsJsonObject().get("content").getAsString())
+                .isEqualTo("系".repeat(99) + "😀...");
+        assertThat(loggedMessages.get(1).getAsJsonObject().get("content").getAsString())
+                .isEqualTo("u".repeat(100) + "...");
+        assertThat(loggedMessages.get(2).getAsJsonObject().get("reasoning_content").getAsString())
+                .isEqualTo("r".repeat(100) + "...");
+        assertThat(loggedMessages.get(2).getAsJsonObject().getAsJsonArray("tool_calls")
+                .get(0).getAsJsonObject().getAsJsonObject("function").get("arguments").getAsString())
+                .isEqualTo(arguments);
+        assertThat(logged.getAsJsonArray("tools").get(0)).isEqualTo(providerTool);
+        assertThat(logged.get("custom_parameter").getAsString()).isEqualTo("p".repeat(140));
+
+        assertThat(sentBodies).hasSize(2).allSatisfy(sent -> {
+            assertThat(sent.getAsJsonArray("messages").get(0).getAsJsonObject()
+                    .get("content").getAsString()).isEqualTo(system);
+            assertThat(sent.getAsJsonArray("messages").get(1).getAsJsonObject()
+                    .get("content").getAsString()).isEqualTo(user);
+            assertThat(sent.getAsJsonArray("tools").get(0)).isEqualTo(providerTool);
+        });
+    }
+
+    @Test
+    void disabledRequestDiagnosticsProducesNoRequestLog() {
+        List<String> debugLogs = new CopyOnWriteArrayList<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            respond(exchange, 200, ordinaryResponse("ok"));
+        });
+        ChatCompletionsClient client = new ChatCompletionsClient(HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2)).build(), debugLogs::add);
+
+        client.complete(request(List.of(ApiMessage.user("quiet")), List.of(), 0),
+                "secret", IGNORE_STREAM).join();
+
+        assertThat(debugLogs).isEmpty();
     }
 
     @Test
@@ -393,7 +477,7 @@ class ChatCompletionsClientTest {
     }
 
     @Test
-    void retainsSanitizedProviderErrorDetailsWithoutRetryingHttp400() {
+    void retainsRawProviderErrorResponseWithoutParsingJson() {
         AtomicInteger attempts = new AtomicInteger();
         server.createContext("/v1/chat/completions", exchange -> {
             attempts.incrementAndGet();
@@ -412,13 +496,46 @@ class ChatCompletionsClientTest {
         assertThat(failure.statusCode()).isEqualTo(400);
         assertThat(failure.retryable()).isFalse();
         assertThat(failure.requestId()).isEqualTo("request-123");
-        assertThat(failure.providerCode()).isEqualTo("bad_schema");
-        assertThat(failure.providerType()).isEqualTo("invalid_request");
-        assertThat(failure.providerParam()).isEqualTo("thinking");
-        assertThat(failure.providerMessage()).isEqualTo("invalid option");
-        assertThat(failure.sanitizedBody()).contains("<redacted>")
-                .doesNotContain("TOP_SECRET", "PRIVATE", "PRIVATE_REASONING", "credential");
+        assertThat(failure.responseBody()).contains(
+                "\"code\":\"bad_schema\"", "TOP_SECRET", "PRIVATE", "PRIVATE_REASONING")
+                .doesNotContain("credential");
         assertThat(attempts).hasValue(1);
+    }
+
+    @Test
+    void retainsRawSseProviderErrorResponse() {
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
+            byte[] response = """
+                    event: error
+                    data: upstream overloaded
+                    data: retry later
+
+                    data: [DONE]
+
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(429, response.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(response);
+            }
+        });
+
+        Throwable cause = org.assertj.core.api.Assertions.catchThrowable(() ->
+                client().complete(request(List.of(), List.of(), 0), "credential", IGNORE_STREAM).join());
+
+        assertThat(cause).isInstanceOf(CompletionException.class);
+        ChatCompletionException failure = (ChatCompletionException) cause.getCause();
+        assertThat(failure.statusCode()).isEqualTo(429);
+        assertThat(failure.retryable()).isTrue();
+        assertThat(failure.responseBody()).isEqualTo("""
+                event: error
+                data: upstream overloaded
+                data: retry later
+
+                data: [DONE]
+
+                """);
     }
 
     private ChatCompletionsClient client() {

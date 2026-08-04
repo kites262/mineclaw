@@ -2,6 +2,7 @@ package cc.kites.mineclaw.commandexec;
 
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -12,8 +13,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CommandRequestTest {
     @Test
-    void requiresAllThreeFieldsButAcceptsExplicitNullPlayer() {
-        JsonObject arguments = request("/Say   Hello", "  announce   hello  ", JsonNull.INSTANCE);
+    void requiresAllThreeFieldsAndUsesAnExactEmptyPlayerStringForConsole() {
+        JsonObject arguments = request("/Say   Hello", "  announce   hello  ", new JsonPrimitive(""));
 
         CommandRequest parsed = CommandRequest.parse(arguments);
 
@@ -33,13 +34,15 @@ class CommandRequestTest {
 
     @Test
     void rejectsWrongTypesBlankTextControlsAndOverlongValues() {
-        JsonObject wrongType = request("say hi", "intent", JsonNull.INSTANCE);
+        JsonObject wrongType = request("say hi", "intent", new JsonPrimitive(""));
         wrongType.addProperty("command", 12);
         assertInvalid(wrongType, "command must be a string");
 
-        assertInvalid(request(" /  ", "intent", JsonNull.INSTANCE), "command must not be blank");
-        assertInvalid(request("say hi\nstop", "intent", JsonNull.INSTANCE), "control character");
-        assertInvalid(request("say hi", "intent\u0000", JsonNull.INSTANCE), "control character");
+        assertInvalid(request(" /  ", "intent", new JsonPrimitive("")), "command must not be blank");
+        assertInvalid(request("say hi\nstop", "intent", new JsonPrimitive("")), "control character");
+        assertInvalid(request("say hi", "intent\u0000", new JsonPrimitive("")), "control character");
+        assertInvalid(request("say hi", "intent", JsonNull.INSTANCE), "player must be a string");
+        assertInvalid(request("say hi", "intent", new JsonPrimitive(" ")), "player must not be blank");
 
         JsonObject playerWhitespace = new JsonObject();
         playerWhitespace.addProperty("command", "home");
@@ -48,14 +51,14 @@ class CommandRequestTest {
         assertInvalid(playerWhitespace, "without whitespace");
 
         CommandRequest.Limits limits = new CommandRequest.Limits(3, 4, 5);
-        assertThatThrownBy(() -> CommandRequest.parse(request("four", "fine", JsonNull.INSTANCE), limits))
+        assertThatThrownBy(() -> CommandRequest.parse(request("four", "fine", new JsonPrimitive("")), limits))
                 .isInstanceOf(CommandRequest.InvalidCommandRequestException.class)
                 .hasMessageContaining("command is longer");
     }
 
     @Test
     void whitelistUsesRootLocaleAndMatchesTheEntireNormalizedCommand() {
-        CommandRequest request = CommandRequest.parse(request("  /I  TEST ", "intent", JsonNull.INSTANCE));
+        CommandRequest request = CommandRequest.parse(request("  /I  TEST ", "intent", new JsonPrimitive("")));
         CommandRules exact = new CommandRules(true, List.of(), List.of(Pattern.compile("i test")));
         CommandRules prefixOnly = new CommandRules(true, List.of(), List.of(Pattern.compile("i")));
 

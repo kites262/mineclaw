@@ -130,7 +130,7 @@ final class ChatResponseParser {
         } catch (JsonParseException | IllegalStateException exception) {
             throw malformed("Malformed Chat Completions SSE event", exception);
         }
-        throwIfError(root, 200);
+        throwIfError(root, 200, payload);
         usage = parseUsage(root, usage);
         JsonArray choices = array(root, "choices");
         if (choices == null) {
@@ -208,7 +208,7 @@ final class ChatResponseParser {
         } catch (JsonParseException | IllegalStateException exception) {
             throw malformed("Malformed Chat Completions JSON response", exception);
         }
-        throwIfError(root, 200);
+        throwIfError(root, 200, body);
         JsonArray choices = array(root, "choices");
         if (choices == null || choices.isEmpty() || !choices.get(0).isJsonObject()) {
             throw malformed("Chat Completions response did not contain a choice", null);
@@ -265,50 +265,23 @@ final class ChatResponseParser {
 
     static ChatCompletionException errorResponse(int statusCode, String body, String requestId,
                                                    boolean bodyTruncated) {
-        JsonObject root = null;
-        try {
-            JsonElement parsed = JsonParser.parseString(body);
-            if (parsed.isJsonObject()) {
-                root = parsed.getAsJsonObject();
-            }
-        } catch (JsonParseException ignored) {
-            // A status and a sanitized generic message are sufficient for malformed error bodies.
-        }
         boolean retryable = ChatCompletionsClient.isRetryableStatus(statusCode);
-        JsonObject error = root == null ? null : object(root, "error");
         return new ChatCompletionException("Chat Completions request failed with HTTP " + statusCode,
-                statusCode, retryable, oneLine(requestId, 512),
-                oneLine(error == null ? "" : string(error, "code"), 512),
-                oneLine(error == null ? "" : string(error, "type"), 512),
-                oneLine(error == null ? "" : string(error, "param"), 512),
-                oneLine(error == null ? "" : string(error, "message"), 4_096),
-                sanitizedBody(root, bodyTruncated));
+                statusCode, retryable, requestId, upstreamResponse(body, bodyTruncated));
     }
 
-    private static void throwIfError(JsonObject root, int statusCode) {
+    private static void throwIfError(JsonObject root, int statusCode, String upstreamResponse) {
         JsonObject error = object(root, "error");
         if (error == null) {
             return;
         }
-        boolean retryable = isRecoverableError(root);
+        boolean retryable = isRecoverableError(upstreamResponse);
         throw new ChatCompletionException("Chat Completions endpoint returned an error", statusCode, retryable,
-                "", oneLine(string(error, "code"), 512), oneLine(string(error, "type"), 512),
-                oneLine(string(error, "param"), 512), oneLine(string(error, "message"), 4_096),
-                sanitizedBody(root, false));
+                "", upstreamResponse(upstreamResponse, false));
     }
 
-    private static boolean isRecoverableError(JsonObject root) {
-        JsonObject error = object(root, "error");
-        if (error == null) {
-            return false;
-        }
-        String type = string(error, "type").toLowerCase(java.util.Locale.ROOT);
-        String code = string(error, "code").toLowerCase(java.util.Locale.ROOT);
-        String message = string(error, "message").toLowerCase(java.util.Locale.ROOT);
-        return recoverableValue(type) || recoverableValue(code) || recoverableValue(message);
-    }
-
-    private static boolean recoverableValue(String value) {
+    private static boolean isRecoverableError(String response) {
+        String value = response.toLowerCase(java.util.Locale.ROOT);
         return value.contains("rate_limit")
                 || value.contains("server_error")
                 || value.contains("overloaded")
@@ -318,49 +291,9 @@ final class ChatResponseParser {
                 || value.contains("service_unavailable");
     }
 
-    private static String sanitizedBody(JsonObject root, boolean sourceTruncated) {
-        String marker = sourceTruncated ? "<truncated>" : "";
-        if (root == null) {
-            return "<unparseable error body omitted>" + marker;
-        }
-        JsonObject copy = root.deepCopy();
-        redact(copy);
-        int contentLimit = 16 * 1024 - marker.length();
-        return oneLine(copy.toString(), contentLimit) + marker;
-    }
-
-    private static void redact(JsonElement value) {
-        if (value == null || value.isJsonNull() || value.isJsonPrimitive()) {
-            return;
-        }
-        if (value.isJsonArray()) {
-            value.getAsJsonArray().forEach(ChatResponseParser::redact);
-            return;
-        }
-        JsonObject object = value.getAsJsonObject();
-        for (String key : new ArrayList<>(object.keySet())) {
-            String normalized = key.toLowerCase(java.util.Locale.ROOT);
-            if (normalized.equals("api_key") || normalized.equals("authorization")
-                    || normalized.equals("cookie") || normalized.equals("messages")
-                    || normalized.equals("tools") || normalized.equals("arguments")
-                    || normalized.contains("reasoning")) {
-                object.addProperty(key, "<redacted>");
-            } else {
-                redact(object.get(key));
-            }
-        }
-    }
-
-    private static String oneLine(String value, int maximum) {
-        String normalized = value == null ? "" : value.replace('\r', ' ').replace('\n', ' ')
-                .codePoints().map(codePoint -> Character.isISOControl(codePoint) ? ' ' : codePoint)
-                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
-                .toString();
-        if (normalized.length() <= maximum) {
-            return normalized;
-        }
-        String marker = "<truncated>";
-        return normalized.substring(0, Math.max(0, maximum - marker.length())) + marker;
+    private static String upstreamResponse(String body, boolean truncated) {
+        String response = body == null ? "" : body;
+        return truncated ? response + "\n<upstream response truncated after 16384 bytes>" : response;
     }
 
     private static ApiUsage parseUsage(JsonObject root, ApiUsage fallback) {

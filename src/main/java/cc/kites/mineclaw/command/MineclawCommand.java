@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
@@ -155,7 +156,7 @@ public final class MineclawCommand implements BasicCommand {
     }
 
     private void decide(CommandSender sender, String[] args, boolean approve) {
-        if (args.length != 2) {
+        if (args.length != 2 && !(approve && args.length == 1)) {
             renderAndSend(sender, "approve_none");
             return;
         }
@@ -166,12 +167,27 @@ public final class MineclawCommand implements BasicCommand {
             renderAndSend(sender, "player_only");
             return;
         }
-        InteractionManager.Outcome result = approve
-                ? interactions.approve(player.getUniqueId(), args[1])
-                : interactions.reject(player.getUniqueId(), args[1]);
+        InteractionManager.Outcome result = completeDecision(
+                interactions, player.getUniqueId(), args, approve);
         if (result == InteractionManager.Outcome.NONE) {
             renderAndSend(sender, "approve_none");
         }
+    }
+
+    static InteractionManager.Outcome completeDecision(
+            InteractionManager interactions, UUID playerId, String[] args, boolean approve) {
+        Objects.requireNonNull(interactions, "interactions");
+        Objects.requireNonNull(playerId, "playerId");
+        Objects.requireNonNull(args, "args");
+        if (approve && args.length == 1) {
+            return interactions.approveCurrentConfirm(playerId);
+        }
+        if (args.length != 2) {
+            return InteractionManager.Outcome.NONE;
+        }
+        return approve
+                ? interactions.approve(playerId, args[1])
+                : interactions.reject(playerId, args[1]);
     }
 
     private void select(CommandSender sender, String[] args) {

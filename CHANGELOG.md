@@ -2,6 +2,33 @@
 
 Mineclaw 使用语义化版本。v1.0.0 是重新设计的第一个稳定大版本，与全部 v0.x 配置不兼容。
 
+## 1.1.0 — 2026-08-04
+
+### 请求调试
+
+- `logging.level: ALL` 同时开启完整日志与请求诊断，不再使用独立的顶层 `debug` 开关。
+- 启用后，每次实际 Chat Completions 请求（包括重试与上下文压缩）在控制台打印请求 Body。
+- `messages` 中超过 100 个 Unicode 字符的 `content`/`*_content` 只保留前 100 字并追加 `...`；实际 Provider 请求不被修改。
+- `tools`、tool-call arguments、模型参数、Provider 原生 Tool 与请求扩展在调试日志中原样保留；Authorization 与 API key 不进入日志。
+
+### Provider 错误响应
+
+- 错误处理不再解析或重写 JSON 字段，控制台直接显示受 16 KiB 上限保护的上游响应原文。
+- SSE 错误响应保留事件文本，不再作为无法解析的 JSON 被省略。
+
+### 命令与审批
+
+- `run_command.player` 统一为必填字符串：空字符串表示控制台，非空字符串表示在线玩家的准确账号名或 UUID；不再接受 JSON `null`。
+- `/mineclaw approve` 不提供 UUID 时，批准该玩家当前最新且仍有效的 confirm 请求；select 仍要求明确 option。
+
+## 1.0.1 — 2026-08-04
+
+### 玩家审批
+
+- `/mineclaw approve` 不提供 UUID 时，批准该玩家当前最新且仍有效的 confirm 请求。
+- `/mineclaw approve <UUID>`、`/mineclaw reject <UUID>` 与点击组件继续按一次性 UUID 精确匹配。
+- select 请求不会被无 UUID 的 approve 代替选择，仍需提交明确 option。
+
 ## 1.0.0 — 2026-08-04
 
 ### Agent runtime

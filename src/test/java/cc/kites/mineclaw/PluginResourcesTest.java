@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -15,7 +16,7 @@ class PluginResourcesTest {
     void paperDescriptorMatchesRuntimeAndDeclaresEveryPermission() throws Exception {
         YamlConfiguration descriptor = yaml("/paper-plugin.yml");
         assertThat(descriptor.getString("name")).isEqualTo("Mineclaw");
-        assertThat(descriptor.getString("version")).isEqualTo("1.0.0");
+        assertThat(descriptor.getString("version")).isEqualTo("1.1.0");
         assertThat(descriptor.getString("main")).isEqualTo("cc.kites.mineclaw.MineclawPlugin");
         assertThat(descriptor.getString("api-version")).isEqualTo("26.2");
         assertThat(descriptor.getBoolean("folia-supported")).isTrue();
@@ -115,6 +116,16 @@ class PluginResourcesTest {
         assertThat(tools.getMapList("tools")).hasSize(9).allSatisfy(tool -> {
             assertThat(tool.keySet()).isEqualTo(Set.of("handler", "enabled", "payload"));
         });
+        Map<?, ?> runCommand = tools.getMapList("tools").stream()
+                .filter(tool -> tool.get("handler").equals("run_command"))
+                .findFirst()
+                .orElseThrow();
+        Map<?, ?> payload = (Map<?, ?>) runCommand.get("payload");
+        Map<?, ?> toolFunction = (Map<?, ?>) payload.get("function");
+        Map<?, ?> parameters = (Map<?, ?>) toolFunction.get("parameters");
+        Map<?, ?> properties = (Map<?, ?>) parameters.get("properties");
+        Map<?, ?> player = (Map<?, ?>) properties.get("player");
+        assertThat(player.get("type")).isEqualTo("string");
 
         YamlConfiguration functions = yaml("/functions.yml");
         assertThat(functions.getInt("schema")).isEqualTo(1);

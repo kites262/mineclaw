@@ -44,7 +44,8 @@ final class ContextCompactor {
 
     CompletableFuture<Outcome> compact(ProviderCatalog.Model model, ProviderCatalog.Provider provider,
                                        String previousSummary, List<List<ApiMessage>> turns,
-                                       int maxOutputTokens, Optional<String> promptCacheKey) {
+                                       int maxOutputTokens, Optional<String> promptCacheKey,
+                                       boolean requestDiagnostics) {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(provider, "provider");
         Objects.requireNonNull(promptCacheKey, "promptCacheKey");
@@ -63,9 +64,15 @@ final class ContextCompactor {
                 provider.api().endpoint(), model.reference(), model.upstreamModelId(),
                 COMPACTION_SYSTEM, messages, List.of(), provider.transport().timeout(),
                 provider.transport().maxRetries(), provider.transport().backoff(), maxOutputTokens,
-                model.extraBody(), model.interleavedField(), promptCacheKey);
+                model.extraBody(), model.interleavedField(), promptCacheKey, requestDiagnostics);
         return client.complete(request, provider.api().apiKey(), IGNORE_STREAM)
                 .thenApply(result -> outcome(result, rawEstimate));
+    }
+
+    CompletableFuture<Outcome> compact(ProviderCatalog.Model model, ProviderCatalog.Provider provider,
+                                       String previousSummary, List<List<ApiMessage>> turns,
+                                       int maxOutputTokens, Optional<String> promptCacheKey) {
+        return compact(model, provider, previousSummary, turns, maxOutputTokens, promptCacheKey, false);
     }
 
     CompletableFuture<Outcome> compact(ProviderCatalog.Model model, ProviderCatalog.Provider provider,

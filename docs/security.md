@@ -1,6 +1,6 @@
 # 安全模型
 
-Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文说明 v1.0.0 的信任来源、隔离范围和不能保证的事项。
+Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文说明 v1.1.0 的信任来源、隔离范围和不能保证的事项。
 
 ## 信任矩阵
 
@@ -18,7 +18,7 @@ Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文�
 
 ### 模型直接 `run_command`
 
-模型必须先从 Skill 获得命令形状，再提供 `command`、`intent` 和明确的 `player`；`player: null` 表示控制台。
+模型必须先从 Skill 获得命令形状，再提供 `command`、`intent` 和明确的 `player`；`player: ""` 表示控制台，非空值表示在线玩家的准确账号名或 UUID。
 
 - 当前对话玩家自己执行且完整命中 `whitelist.yml.player` 时可直接分发。
 - 控制台命令必须完整命中 `whitelist.yml.console`。

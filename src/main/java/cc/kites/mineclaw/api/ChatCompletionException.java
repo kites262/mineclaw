@@ -1,45 +1,34 @@
 package cc.kites.mineclaw.api;
 
-/** A sanitized Provider failure whose detailed fields are safe for server-only diagnostics. */
+/** A Provider failure retaining the upstream response for server-side diagnostics. */
 public final class ChatCompletionException extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
     private final int statusCode;
     private final boolean retryable;
     private final String requestId;
-    private final String providerCode;
-    private final String providerType;
-    private final String providerParam;
-    private final String providerMessage;
-    private final String sanitizedBody;
+    private final String responseBody;
 
     ChatCompletionException(String message, int statusCode, boolean retryable) {
-        this(message, statusCode, retryable, null, "", "", "", "", "", null);
+        this(message, statusCode, retryable, "", "", null);
     }
 
     ChatCompletionException(String message, int statusCode, boolean retryable, Throwable cause) {
-        this(message, statusCode, retryable, null, "", "", "", "", "", cause);
+        this(message, statusCode, retryable, "", "", cause);
     }
 
     ChatCompletionException(String message, int statusCode, boolean retryable, String requestId,
-                            String providerCode, String providerType, String providerParam,
-                            String providerMessage, String sanitizedBody) {
-        this(message, statusCode, retryable, requestId, providerCode, providerType, providerParam,
-                providerMessage, sanitizedBody, null);
+                            String responseBody) {
+        this(message, statusCode, retryable, requestId, responseBody, null);
     }
 
     private ChatCompletionException(String message, int statusCode, boolean retryable, String requestId,
-                                    String providerCode, String providerType, String providerParam,
-                                    String providerMessage, String sanitizedBody, Throwable cause) {
+                                    String responseBody, Throwable cause) {
         super(message, cause);
         this.statusCode = statusCode;
         this.retryable = retryable;
         this.requestId = safe(requestId);
-        this.providerCode = safe(providerCode);
-        this.providerType = safe(providerType);
-        this.providerParam = safe(providerParam);
-        this.providerMessage = safe(providerMessage);
-        this.sanitizedBody = safe(sanitizedBody);
+        this.responseBody = safe(responseBody);
     }
 
     public int statusCode() {
@@ -52,15 +41,7 @@ public final class ChatCompletionException extends RuntimeException {
 
     public String requestId() { return requestId; }
 
-    public String providerCode() { return providerCode; }
-
-    public String providerType() { return providerType; }
-
-    public String providerParam() { return providerParam; }
-
-    public String providerMessage() { return providerMessage; }
-
-    public String sanitizedBody() { return sanitizedBody; }
+    public String responseBody() { return responseBody; }
 
     private static String safe(String value) {
         return value == null ? "" : value;

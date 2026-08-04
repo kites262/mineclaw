@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -30,22 +31,34 @@ import java.util.function.Consumer;
 public final class ChatCompletionsClient {
     private static final Gson GSON = new Gson();
     private static final int MAX_ERROR_BODY_BYTES = 16 * 1024;
+    private static final int DEBUG_MESSAGE_CODE_POINTS = 100;
     private static final Duration MAX_RETRY_BACKOFF = Duration.ofSeconds(60);
 
     private final HttpClient httpClient;
+    private final Consumer<String> debugLogger;
 
     public ChatCompletionsClient() {
         // Never forward a bearer credential through an endpoint-controlled redirect.
-        this(HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build());
+        this(HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), ignored -> { });
+    }
+
+    public ChatCompletionsClient(Consumer<String> debugLogger) {
+        this(HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), debugLogger);
     }
 
     public ChatCompletionsClient(HttpClient httpClient) {
+        this(httpClient, ignored -> { });
+    }
+
+    public ChatCompletionsClient(HttpClient httpClient, Consumer<String> debugLogger) {
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
+        this.debugLogger = Objects.requireNonNull(debugLogger, "debugLogger");
     }
 
     /**
      * Executes an initial request plus at most {@link ChatCompletionRequest#maxRetries()} retries. The API key is
-     * only placed in the provider's authentication header and is never included in an exception or log message.
+     * only placed in the provider's authentication header; Mineclaw never copies it into an exception or log.
+     * Provider error responses are retained verbatim and may independently echo sensitive upstream data.
      */
     public CompletableFuture<ChatCompletionResult> complete(
             ChatCompletionRequest request,
@@ -56,7 +69,8 @@ public final class ChatCompletionsClient {
         validateApiKey(apiKey);
         Objects.requireNonNull(observer, "observer");
         String body = requestBody(request);
-        return new RequestOperation(request, apiKey, observer, body).start();
+        String debugBody = request.requestDiagnostics() ? debugRequestBody(body) : "";
+        return new RequestOperation(request, apiKey, observer, body, debugBody).start();
     }
 
     private CompletableFuture<ChatCompletionResult> sendAttempt(
@@ -182,6 +196,37 @@ public final class ChatCompletionsClient {
         return GSON.toJson(root);
     }
 
+    static String debugRequestBody(String body) {
+        JsonObject root = JsonParser.parseString(Objects.requireNonNull(body, "body")).getAsJsonObject();
+        JsonArray messages = root.getAsJsonArray("messages");
+        if (messages != null) {
+            for (var element : messages) {
+                if (!element.isJsonObject()) {
+                    continue;
+                }
+                JsonObject message = element.getAsJsonObject();
+                for (var entry : message.entrySet()) {
+                    String field = entry.getKey();
+                    if ((field.equals("content") || field.endsWith("_content"))
+                            && entry.getValue().isJsonPrimitive()
+                            && entry.getValue().getAsJsonPrimitive().isString()) {
+                        entry.setValue(new com.google.gson.JsonPrimitive(
+                                truncateDebugMessage(entry.getValue().getAsString())));
+                    }
+                }
+            }
+        }
+        return GSON.toJson(root);
+    }
+
+    private static String truncateDebugMessage(String value) {
+        if (value.codePointCount(0, value.length()) <= DEBUG_MESSAGE_CODE_POINTS) {
+            return value;
+        }
+        int end = value.offsetByCodePoints(0, DEBUG_MESSAGE_CODE_POINTS);
+        return value.substring(0, end) + "...";
+    }
+
     private static JsonObject messageJson(ApiMessage message) {
         JsonObject result = new JsonObject();
         result.addProperty("role", message.role());
@@ -284,15 +329,17 @@ public final class ChatCompletionsClient {
         private final String apiKey;
         private final StreamObserver observer;
         private final String body;
+        private final String debugBody;
         private final CompletableFuture<ChatCompletionResult> result = new CompletableFuture<>();
         private final AtomicReference<CompletableFuture<?>> current = new AtomicReference<>();
 
         private RequestOperation(ChatCompletionRequest request, String apiKey,
-                                 StreamObserver observer, String body) {
+                                 StreamObserver observer, String body, String debugBody) {
             this.request = request;
             this.apiKey = apiKey;
             this.observer = observer;
             this.body = body;
+            this.debugBody = debugBody;
         }
 
         private CompletableFuture<ChatCompletionResult> start() {
@@ -315,6 +362,7 @@ public final class ChatCompletionsClient {
             AtomicBoolean emittedDelta = new AtomicBoolean();
             CompletableFuture<ChatCompletionResult> transport;
             try {
+                logDebugRequest(attemptNumber + 1);
                 transport = sendAttempt(request, apiKey, delta -> {
                         emittedDelta.set(true);
                         observer.onDelta(delta);
@@ -374,6 +422,18 @@ public final class ChatCompletionsClient {
                     result.completeExceptionally(normalizeFailure(cause));
                 }
             });
+        }
+
+        private void logDebugRequest(int attemptNumber) {
+            if (!request.requestDiagnostics()) {
+                return;
+            }
+            try {
+                debugLogger.accept("[Mineclaw debug] Chat Completions request attempt="
+                        + attemptNumber + " model=" + request.modelReference() + " body=" + debugBody);
+            } catch (RuntimeException ignored) {
+                // Debug output must never alter transport behavior.
+            }
         }
     }
 

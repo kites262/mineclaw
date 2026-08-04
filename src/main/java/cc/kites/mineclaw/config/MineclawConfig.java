@@ -243,6 +243,10 @@ public record MineclawConfig(
         public String configuredName() {
             return level.getName().toUpperCase(Locale.ROOT);
         }
+
+        public boolean requestDiagnosticsEnabled() {
+            return Level.ALL.equals(level);
+        }
     }
 
     private static Set<String> immutableStrings(Set<String> source, String field) {

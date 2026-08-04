@@ -3,7 +3,6 @@ package cc.kites.mineclaw.commandexec;
 import cc.kites.mineclaw.approval.ApprovalManager;
 import cc.kites.mineclaw.support.AuditLogger;
 import cc.kites.mineclaw.tool.ToolExecution;
-import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
 
@@ -358,7 +357,7 @@ class CommandExecutorPolicyTest {
         result.addProperty("command", command);
         result.addProperty("intent", intent);
         if (player == null) {
-            result.add("player", JsonNull.INSTANCE);
+            result.addProperty("player", "");
         } else {
             result.addProperty("player", player);
         }

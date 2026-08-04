@@ -503,12 +503,13 @@ public final class TurnCoordinator {
         long started = System.nanoTime();
         CompletableFuture<ContextCompactor.Outcome> request = compactor.compact(
                 turn.model, turn.provider, turn.summary, compactedTurns, outputBudget,
-                turn.promptCacheKey);
+                turn.promptCacheKey, turn.config.logging().requestDiagnosticsEnabled());
         turn.inFlight.set(request);
         return request.handle((outcome, failure) -> {
             long elapsed = elapsedMillis(started);
             if (failure != null) {
                 Throwable cause = unwrap(failure);
+                logCompactionProviderFailure(turn.model, turn.provider, triggerSource, cause);
                 logger.info(compactionLog(turn, isCurrent(turn) ? "failed" : "cancelled", triggerSource,
                         turn.model.limits().compactTriggerTokens().orElse(-1), beforeTokens, -1,
                         elapsed, compactedTurns.size(), retainedTurns.size(),
@@ -591,7 +592,8 @@ public final class TurnCoordinator {
                 turn.model.upstreamModelId(), system, turn.context, definitions,
                 turn.provider.transport().timeout(), turn.provider.transport().maxRetries(),
                 turn.provider.transport().backoff(), turn.model.limits().maxOutputTokens(),
-                turn.model.extraBody(), turn.model.interleavedField(), turn.promptCacheKey);
+                turn.model.extraBody(), turn.model.interleavedField(), turn.promptCacheKey,
+                turn.config.logging().requestDiagnosticsEnabled());
         return new PreparedRound(request, estimate, compacted);
     }
 
@@ -722,13 +724,15 @@ public final class TurnCoordinator {
         long started = System.nanoTime();
         CompletableFuture<ContextCompactor.Outcome> request = compactor.compact(
                 model, snapshot.provider(), snapshot.source().summary(), compactedTurns, outputBudget,
-                promptCacheKey(model, snapshot.source()));
+                promptCacheKey(model, snapshot.source()),
+                snapshot.config().logging().requestDiagnosticsEnabled());
         return request.handle((outcome, failure) -> {
             long elapsed = elapsedMillis(started);
             if (failure != null) {
                 Throwable cause = unwrap(failure);
                 String status = cause instanceof java.util.concurrent.CancellationException
                         ? "cancelled" : "failed";
+                logCompactionProviderFailure(model, snapshot.provider(), "command", cause);
                 logger.info(manualCompactionLog(model.reference(), status,
                         model.limits().compactTriggerTokens().orElse(-1), beforeTokens, -1,
                         elapsed, compactedTurns.size(), retainedTurns.size(),
@@ -813,9 +817,8 @@ public final class TurnCoordinator {
         if (!(failure instanceof ChatCompletionException providerFailure)) {
             return false;
         }
-        String value = (providerFailure.providerCode() + ' ' + providerFailure.providerType() + ' '
-                + providerFailure.providerParam() + ' ' + providerFailure.providerMessage() + ' '
-                + providerFailure.getMessage()).toLowerCase(java.util.Locale.ROOT);
+        String value = (providerFailure.responseBody() + ' ' + providerFailure.getMessage())
+                .toLowerCase(java.util.Locale.ROOT);
         return value.contains("context_length") || value.contains("context window")
                 || value.contains("maximum context") || value.contains("context overflow")
                 || value.contains("too many tokens") || value.contains("token limit");
@@ -943,15 +946,11 @@ public final class TurnCoordinator {
                     + " attempt=" + attempt
                     + " http_status=" + providerFailure.statusCode()
                     + " request_id=" + safe(providerFailure.requestId())
-                    + " error_code=" + safe(providerFailure.providerCode())
-                    + " error_type=" + safe(providerFailure.providerType())
-                    + " error_param=" + safe(providerFailure.providerParam())
-                    + " error_message=" + safe(providerFailure.providerMessage())
                     + " retryable=" + providerFailure.retryable()
                     + " will_retry=" + willRetry
                     + " final_stop=" + !willRetry
                     + " cause_chain=" + causeTypes(providerFailure)
-                    + " body=" + providerFailure.sanitizedBody());
+                    + " upstream_response=" + providerFailure.responseBody());
         } else {
             logger.warning("Mineclaw Provider transport failed"
                     + " turn_id=" + turn.id
@@ -963,6 +962,22 @@ public final class TurnCoordinator {
                     + " final_stop=" + !willRetry
                     + " cause_chain=" + causeTypes(failure));
         }
+    }
+
+    private void logCompactionProviderFailure(ProviderCatalog.Model model,
+                                              ProviderCatalog.Provider provider,
+                                              String source, Throwable failure) {
+        if (!(failure instanceof ChatCompletionException providerFailure)) {
+            return;
+        }
+        logger.warning("Mineclaw Provider compaction request failed"
+                + " model=" + model.reference()
+                + " provider=" + provider.id()
+                + " trigger_source=" + source
+                + " http_status=" + providerFailure.statusCode()
+                + " request_id=" + safe(providerFailure.requestId())
+                + " retryable=" + providerFailure.retryable()
+                + " upstream_response=" + providerFailure.responseBody());
     }
 
     private static String causeTypes(Throwable failure) {

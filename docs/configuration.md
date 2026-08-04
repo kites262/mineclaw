@@ -1,6 +1,6 @@
 # 配置参考
 
-本文对应 Mineclaw 1.0.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
+本文对应 Mineclaw 1.1.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
 
 ## 文件与生效时机
 
@@ -67,9 +67,11 @@
 | `environment.tool_cooldown_ms` | `250` | 环境 Tool 冷却 |
 | `environment.inventory.include_equipment` | `true` | 背包摘要是否含装备 |
 | `environment.inventory.max_slots` | `36` | 背包摘要最大槽位数 |
-| `logging.level` | `INFO` | `java.util.logging` 等级 |
+| `logging.level` | `INFO` | `java.util.logging` 等级；设为 `ALL` 时同时打印 Provider 请求诊断 |
 
 `api` 和 `commands` 是明确拒绝的旧版 section：Provider 已迁到 `providers.yml`，模型命令策略已迁到 `whitelist.yml`。
+
+`logging.level: ALL` 对普通 Turn、自动压缩、手动压缩与 transport 重试开启完整日志，并让每次实际 Chat Completions 请求输出完整 JSON 结构。`messages` 中超过 100 个 Unicode 字符的 `content` 和 `*_content` 只保留前 100 字并追加 `...`。`tools`、tool-call arguments、Provider 原生 Tool、模型参数和请求扩展原样保留。日志不包含 Authorization 或 API key；请求 Body 仍可能含玩家对话和服务器资料，只应在受控排障期间临时启用 `ALL`。其他日志级别不会输出请求 Body。
 
 ## `providers.yml` Schema 1
 

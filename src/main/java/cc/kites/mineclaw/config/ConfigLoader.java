@@ -68,7 +68,6 @@ public final class ConfigLoader {
         if (schema != MineclawConfig.SCHEMA) {
             throw invalid("schema", "must be " + MineclawConfig.SCHEMA);
         }
-
         MineclawConfig.Context contextDefaults = defaults.context();
         MineclawConfig.Context context = new MineclawConfig.Context(
                 positiveInt(yaml, "context.max_messages", contextDefaults.maxMessages()));

@@ -16,10 +16,22 @@ class ConfigLoaderTest {
         MineclawConfig config = loader.parse(resource("/config.yml"));
 
         assertThat(config.schema()).isEqualTo(1);
+        assertThat(config.logging().requestDiagnosticsEnabled()).isFalse();
         assertThat(config.context()).isEqualTo(new MineclawConfig.Context(24));
         assertThat(config.chat().publicPrefix()).isEqualTo("@ai");
         assertThat(config.tools().enabled()).isTrue();
         assertThat(config.identity().name()).isEqualTo("Mineclaw");
+    }
+
+    @Test
+    void enablesRequestDiagnosticsOnlyAtLoggingAll() throws Exception {
+        assertThat(loader.parse("schema: 1\nlogging: {level: ALL}\n")
+                .logging().requestDiagnosticsEnabled()).isTrue();
+        assertThat(loader.parse("schema: 1\nlogging: {level: INFO}\n")
+                .logging().requestDiagnosticsEnabled()).isFalse();
+        assertThatThrownBy(() -> loader.parse("schema: 1\ndebug: true\n"))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("debug is not a supported field");
     }
 
     @Test

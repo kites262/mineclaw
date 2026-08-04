@@ -25,7 +25,8 @@ public record ChatCompletionRequest(
         int maxOutputTokens,
         JsonObject extraBody,
         Optional<String> interleavedField,
-        Optional<String> promptCacheKey
+        Optional<String> promptCacheKey,
+        boolean requestDiagnostics
 ) {
     public ChatCompletionRequest {
         Objects.requireNonNull(endpoint, "endpoint");
@@ -77,17 +78,28 @@ public record ChatCompletionRequest(
                                  String systemPrompt, List<ApiMessage> messages,
                                  List<JsonObject> tools, Duration timeout, int maxRetries,
                                  Duration retryBackoff, int maxOutputTokens,
+                                 JsonObject extraBody, Optional<String> interleavedField,
+                                 Optional<String> promptCacheKey) {
+        this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
+                maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
+                promptCacheKey, false);
+    }
+
+    public ChatCompletionRequest(URI endpoint, String modelReference, String model,
+                                 String systemPrompt, List<ApiMessage> messages,
+                                 List<JsonObject> tools, Duration timeout, int maxRetries,
+                                 Duration retryBackoff, int maxOutputTokens,
                                  JsonObject extraBody, Optional<String> interleavedField) {
         this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
                 maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
-                Optional.empty());
+                Optional.empty(), false);
     }
 
     public ChatCompletionRequest(URI endpoint, String model, String systemPrompt,
                                  List<ApiMessage> messages, List<JsonObject> tools,
                                  Duration timeout, int maxRetries, Duration retryBackoff) {
         this(endpoint, model, model, systemPrompt, messages, tools, timeout, maxRetries, retryBackoff,
-                0, new JsonObject(), Optional.empty(), Optional.empty());
+                0, new JsonObject(), Optional.empty(), Optional.empty(), false);
     }
 
     @Override

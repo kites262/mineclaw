@@ -105,7 +105,7 @@ public final class MineclawPlugin extends JavaPlugin {
             getLogger().severe("Mineclaw control plane rejected; AI conversation is disabled until a "
                     + "successful /mineclaw reload: " + safe(exception.getMessage()));
         }
-        getLogger().setLevel(config.logging().level());
+        configureLogging(config);
 
         try {
             Path workspaceRoot = root.resolve("workspace");
@@ -146,7 +146,8 @@ public final class MineclawPlugin extends JavaPlugin {
                     ioExecutor, availableJavaScript, operationRouter, audit);
             turns = new TurnCoordinator(controlPlane, root, workspace, toolCatalog, toolsFile,
                     functionCatalogLoader, functionsFile,
-                    new ChatCompletionsClient(), dispatcher, session, rateLimiter, messages, channel, tasks,
+                    new ChatCompletionsClient(getLogger()::info), dispatcher,
+                    session, rateLimiter, messages, channel, tasks,
                     ioExecutor, getLogger(), () -> isEnabled() && controlPlaneReady.get());
 
             getServer().getPluginManager().registerEvents(
@@ -210,7 +211,7 @@ public final class MineclawPlugin extends JavaPlugin {
             }
             if (failure == null) {
                 MineclawConfig config = snapshot.config();
-                getLogger().setLevel(config.logging().level());
+                configureLogging(config);
                 if (functionCatalogLoader != null) {
                     functionCatalogLoader.reconfigure(functionLimits(config));
                 }
@@ -318,6 +319,10 @@ public final class MineclawPlugin extends JavaPlugin {
                 functions.maxDescriptionChars(), functions.maxArgumentChars(),
                 functions.maxArgumentDepth(), functions.maxArgumentMembers(),
                 functions.maxValidationViolations(), config.javascript().maxSourceChars());
+    }
+
+    private void configureLogging(MineclawConfig config) {
+        getLogger().setLevel(config.logging().level());
     }
 
     private CommandRules currentRules() {

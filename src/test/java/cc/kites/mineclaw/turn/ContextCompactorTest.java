@@ -13,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -52,12 +53,13 @@ class ContextCompactorTest {
                     new ProviderCatalog.Limits(4096, 512, OptionalInt.of(3_000)),
                     true, Optional.empty(), new JsonObject());
             String cacheKey = "mineclaw:550e8400-e29b-41d4-a716-446655440000";
+            List<String> debugLogs = new ArrayList<>();
 
-            ContextCompactor.Outcome result = new ContextCompactor(new ChatCompletionsClient())
+            ContextCompactor.Outcome result = new ContextCompactor(new ChatCompletionsClient(debugLogs::add))
                     .compact(model, provider, "old summary",
                             List.of(List.of(ApiMessage.user("do not summarize me"),
                                     ApiMessage.assistant("known result"))), 256,
-                            Optional.of(cacheKey)).join();
+                            Optional.of(cacheKey), true).join();
 
             assertThat(result.summary()).isEqualTo("goal: keep the known result");
             assertThat(body.get().get("model").getAsString()).isEqualTo("model");
@@ -65,6 +67,9 @@ class ContextCompactorTest {
             assertThat(body.get().has("tools")).isFalse();
             assertThat(body.get().toString()).doesNotContain("compact_trigger_tokens");
             assertThat(body.get().getAsJsonArray("messages")).hasSize(2);
+            assertThat(debugLogs).singleElement().asString()
+                    .contains("[Mineclaw debug]", "model=test/model")
+                    .doesNotContain("\"tools\"", "secret");
             String material = body.get().getAsJsonArray("messages").get(1).getAsJsonObject()
                     .get("content").getAsString();
             assertThat(material).contains("old summary", "do not summarize me", "known result");

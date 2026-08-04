@@ -18,7 +18,7 @@ public record CommandRequest(String command, String intent, Optional<String> pla
         player = Objects.requireNonNull(player, "player");
     }
 
-    /** Parses the three required JSON members. An explicit JSON null selects the console. */
+    /** Parses the three required JSON members. An exact empty player string selects the console. */
     public static CommandRequest parse(JsonObject arguments) {
         return parse(arguments, DEFAULT_LIMITS);
     }
@@ -32,10 +32,10 @@ public record CommandRequest(String command, String intent, Optional<String> pla
 
         String command = requiredString(arguments.get("command"), "command");
         String intent = requiredString(arguments.get("intent"), "intent");
-        JsonElement rawPlayer = arguments.get("player");
-        Optional<String> player = rawPlayer.isJsonNull()
+        String rawPlayer = requiredString(arguments.get("player"), "player");
+        Optional<String> player = rawPlayer.isEmpty()
                 ? Optional.empty()
-                : Optional.of(requiredString(rawPlayer, "player"));
+                : Optional.of(rawPlayer);
 
         command = normalizeCommand(command, limits.maxCommandCodePoints());
         intent = normalizeText(intent, "intent", limits.maxIntentCodePoints(), true);

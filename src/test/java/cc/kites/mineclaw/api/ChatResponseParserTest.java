@@ -95,6 +95,32 @@ class ChatResponseParserTest {
     }
 
     @Test
+    void retainsErrorBodiesAsTextWithoutRequiringJson() {
+        ChatCompletionException plain = ChatResponseParser.errorResponse(
+                400, "upstream said: invalid schema\nsecond line", "request-7", false);
+        ChatCompletionException truncated = ChatResponseParser.errorResponse(
+                503, "partial SSE data", "", true);
+
+        assertThat(plain.statusCode()).isEqualTo(400);
+        assertThat(plain.requestId()).isEqualTo("request-7");
+        assertThat(plain.responseBody()).isEqualTo("upstream said: invalid schema\nsecond line");
+        assertThat(truncated.responseBody()).isEqualTo(
+                "partial SSE data\n<upstream response truncated after 16384 bytes>");
+    }
+
+    @Test
+    void retainsTheDataPayloadFromAnHttp200SseErrorEvent() {
+        ChatResponseParser parser = new ChatResponseParser(ignored -> { });
+        String payload = "{\"error\":{\"message\":\"upstream SSE failure\"}}";
+
+        Throwable failure = org.assertj.core.api.Assertions.catchThrowable(() ->
+                parser.accept(StandardCharsets.UTF_8.encode("data: " + payload + "\n\n")));
+
+        assertThat(failure).isInstanceOf(ChatCompletionException.class);
+        assertThat(((ChatCompletionException) failure).responseBody()).isEqualTo(payload);
+    }
+
+    @Test
     void rejectsEmptyAndDuplicateToolCallIdsAtTheCompletedResponseBoundary() {
         assertThatThrownBy(() -> parseOrdinary("""
                 [

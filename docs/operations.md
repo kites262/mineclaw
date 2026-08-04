@@ -1,6 +1,6 @@
 # 运维手册
 
-本文覆盖 Mineclaw 1.0.0 的安装、迁移、日常管理、诊断、构建和发布检查。
+本文覆盖 Mineclaw 1.1.0 的安装、迁移、日常管理、诊断、构建和发布检查。
 
 ## 运行要求
 
@@ -14,7 +14,7 @@
 ## 全新安装
 
 1. 停止服务端。
-2. 把 `Mineclaw-1.0.0.jar` 放入 `plugins/`。
+2. 把 `Mineclaw-1.1.0.jar` 放入 `plugins/`。
 3. 启动一次，使插件生成 `plugins/Mineclaw/`，再停止服务端。
 4. 在 `.env` 写入 `MINECLAW_API_KEY`，按需编辑 `providers.yml`。
 5. 审核默认 `whitelist.yml`、`functions.yml` 和 Workspace。
@@ -56,7 +56,7 @@ v1.0.0 是破坏性版本：不保留旧配置读取、字段别名、自动迁�
 | 公屏 `@ai ...` | `mineclaw.command.chat` | true | 使用公共 Agent |
 | `/mineclaw clear` | `mineclaw.command.clear` | op | 清空公共历史并轮换 cache key |
 | `/mineclaw compact` | `mineclaw.command.compact` | op | 强制压缩或排队 |
-| 审批/选择内部命令 | `mineclaw.command.approve` | true | 由点击组件触发 |
+| 审批/选择内部命令 | `mineclaw.command.approve` | true | 点击组件，或无 UUID 的 `/mineclaw approve` |
 | `/mineclaw reload` | `mineclaw.command.reload` | op | 原子重载控制面 |
 | `/mineclaw tools [validate]` | `mineclaw.command.tools` | op | Tool 诊断，不执行副作用 |
 | `/mineclaw functions [validate]` | `mineclaw.command.functions` | op | Function/Skill 引用诊断 |
@@ -64,6 +64,8 @@ v1.0.0 是破坏性版本：不保留旧配置读取、字段别名、自动迁�
 | 绕过聊天冷却 | `mineclaw.bypass.ratelimit` | false | 不绕过其他权限 |
 
 `/mineclaw model` 显示当前选择；`list` 列目录；`default` 恢复 `providers.yml` 默认；完整 `provider/model` 只影响后续 Turn。
+
+`/mineclaw approve` 不提供 UUID 时，会批准该玩家当前最新且仍有效的 confirm 请求。带 UUID 的 approve/reject 仍精确绑定一次性请求；select 必须提交明确 option，不会被无 UUID approve 自动选择。
 
 ## 修改配置
 
@@ -127,7 +129,9 @@ Provider 返回上下文溢出时，Mineclaw 最多做一次压缩恢复和一�
 
 ### Provider 失败
 
-连接、timeout、408、429 和 5xx 会按 transport 重试；普通 4xx 直接失败。确认上游支持 SSE streaming、tool calls、模型名和请求扩展。日志应只记录安全诊断，不应复制 key。
+连接、timeout、408、429 和 5xx 会按 transport 重试；普通 4xx 直接失败。确认上游支持 SSE streaming、tool calls、模型名和请求扩展。Provider 返回错误时，控制台直接显示上游响应原文；JSON 不再被拆字段或重写，SSE 错误也保留事件文本。响应最多保留 16 KiB，且可能包含上游回显的数据，应按敏感日志管理。
+
+需要核对实际请求时，可临时设置 `logging.level: ALL` 并执行 `/mineclaw reload`。日志会保留完整 tools 与请求参数，但会把长消息截为前 100 个 Unicode 字符加 `...`。排障完成后恢复常规级别（默认 `INFO`）；即使没有凭据头，请求 Body 仍可能包含玩家对话和本服资料。
 
 ### Action Bar 没有颜色
 
@@ -153,16 +157,16 @@ Provider 返回上下文溢出时，Mineclaw 最多做一次压缩恢复和一�
 产物：
 
 ```text
-build/plugins/Mineclaw-1.0.0.jar
+build/plugins/Mineclaw-1.1.0.jar
 ```
 
 构建使用 Java toolchain 25、Gradle Wrapper 9.5.0 和 dependency locking。JAR 会合并运行时依赖，排除签名文件、module descriptor 和所有 `.env`，并加入项目 LICENSE、NOTICE 与第三方许可证资源。
 
-## v1.0.0 发布检查
+## v1.1.0 发布检查
 
 发布候选至少完成：
 
-1. 版本一致：Gradle、`paper-plugin.yml`、README、产物名均为 `1.0.0`。
+1. 版本一致：Gradle、`paper-plugin.yml`、README、产物名均为 `1.1.0`。
 2. `./gradlew --no-daemon clean test assemblePlugin` 全部通过。
 3. 连续两次 clean build 的 JAR SHA-256 一致。
 4. JAR 中不存在 `.env`、凭据、重复 entry 或签名残留，存在 LICENSE/NOTICE/第三方声明。

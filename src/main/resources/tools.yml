@@ -138,7 +138,7 @@ tools:
       type: function
       function:
         name: run_command
-        description: 按 whitelist.yml 的本轮不可变策略或玩家确认流程分发命令；player 必须显式提供，null 表示控制台。dispatched 仅表示命令已提交；execution_result 为 unknown 时不得声称执行成功
+        description: 按 whitelist.yml 的本轮不可变策略或玩家确认流程分发命令；player 必须显式提供，空字符串表示控制台，非空字符串表示在线玩家的准确账号名或 UUID。dispatched 仅表示命令已提交；execution_result 为 unknown 时不得声称执行成功
         parameters:
           type: object
           properties:
@@ -148,6 +148,7 @@ tools:
               type: string
               description: 向确认玩家展示的简短操作说明，直接说清要做什么、由谁执行以及涉及谁
             player:
-              type: [string, 'null']
+              type: string
+              description: 命令执行者；空字符串表示控制台，否则填写在线玩家的准确账号名或 UUID
           required: [command, intent, player]
           additionalProperties: false
