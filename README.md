@@ -2,8 +2,8 @@
 
 # ⛏️ Mineclaw
 
-**Give your Minecraft server an agent—not just a chatbot.**<br>
-**给 Minecraft 服务器一个真正会理解、会查找、会规划、会行动的 Agent。**
+**Give your Minecraft an agent—not just a chatbot.**<br>
+**给 Minecraft 一个有意识、会行动的 Agent。**
 
 Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
@@ -28,8 +28,8 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 <p>
   <strong>🧠 Server knowledge / 本服知识</strong>
   · <strong>🌍 Live context / 现场感知</strong>
-  · <strong>🧭 Goal planning / 目标规划</strong>
-  · <strong>⚙️ Server actions / 能力调用</strong>
+  · <strong>🧭 Goal planning / 目标规划</strong><br>
+  <strong>⚙️ Server actions / 能力调用</strong>
   · <strong>🤝 Player collaboration / 玩家协作</strong>
 </p>
 
