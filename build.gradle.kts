@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "cc.kites"
-version = "1.2.0"
+version = "1.2.1"
 description = "Workspace-first AI Agent runtime for Paper and Folia"
 
 repositories {
