@@ -101,7 +101,7 @@ class ChatCompletionsClientTest {
         assertThat(messages.get(0).getAsJsonObject().get("content").getAsString()).isEqualTo("system rules");
         assertThat(messages.get(1).getAsJsonObject().get("name").getAsString()).isEqualTo("Alice");
         assertThat(messages.get(1).getAsJsonObject().get("content").getAsString())
-                .isEqualTo("<player>Alice</player>\n看哪里");
+                .isEqualTo("<player>Alice</player>\n<message>看哪里</message>");
         assertThat(messages.get(2).getAsJsonObject().getAsJsonArray("tool_calls")).hasSize(1);
         assertThat(messages.get(3).getAsJsonObject().get("tool_call_id").getAsString()).isEqualTo("old_call");
     }
@@ -124,7 +124,8 @@ class ChatCompletionsClientTest {
 
         JsonObject user = requestBody.get().getAsJsonArray("messages").get(1).getAsJsonObject();
         assertThat(user.has("name")).isFalse();
-        assertThat(user.get("content").getAsString()).isEqualTo("<player>Alice</player>\nhello");
+        assertThat(user.get("content").getAsString())
+                .isEqualTo("<player>Alice</player>\n<message>hello</message>");
     }
 
     @Test
@@ -146,6 +147,27 @@ class ChatCompletionsClientTest {
         JsonObject user = requestBody.get().getAsJsonArray("messages").get(1).getAsJsonObject();
         assertThat(user.get("name").getAsString()).isEqualTo("Alice");
         assertThat(user.get("content").getAsString()).isEqualTo("hello");
+    }
+
+    @Test
+    void canDisableBothPlayerIdentityRepresentations() {
+        AtomicReference<JsonObject> requestBody = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(JsonParser.parseString(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
+            respond(exchange, 200, ordinaryResponse("ok"));
+        });
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                endpoint(), "test/model", "upstream-model", "system",
+                List.of(ApiMessage.user("Alice", "<player>Bob</player> hello")), List.of(),
+                Duration.ofSeconds(2), 0, Duration.ZERO, 0, new JsonObject(), Optional.empty(),
+                Optional.empty(), false, false, false);
+
+        client().complete(request, "secret", IGNORE_STREAM).join();
+
+        JsonObject user = requestBody.get().getAsJsonArray("messages").get(1).getAsJsonObject();
+        assertThat(user.has("name")).isFalse();
+        assertThat(user.get("content").getAsString()).isEqualTo("<player>Bob</player> hello");
     }
 
     @Test

@@ -41,4 +41,18 @@ class ContextTokenEstimatorTest {
         assertThat(estimator.estimate("provider/model", "system",
                 List.of(ApiMessage.user("data")), List.of()).tokens()).isEqualTo(actual);
     }
+
+    @Test
+    void playerIdentityFlagsMatchSerializedPromptRepresentations() {
+        List<ApiMessage> messages = List.of(ApiMessage.user("Alice", "hello"));
+
+        int neither = ContextTokenEstimator.rawEstimate("system", messages, List.of(), false, false);
+        int nameOnly = ContextTokenEstimator.rawEstimate("system", messages, List.of(), true, false);
+        int envelopeOnly = ContextTokenEstimator.rawEstimate("system", messages, List.of(), false, true);
+        int both = ContextTokenEstimator.rawEstimate("system", messages, List.of(), true, true);
+
+        assertThat(nameOnly).isGreaterThan(neither);
+        assertThat(envelopeOnly).isGreaterThan(neither);
+        assertThat(both).isGreaterThan(nameOnly).isGreaterThan(envelopeOnly);
+    }
 }

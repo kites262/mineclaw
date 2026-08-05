@@ -41,20 +41,21 @@ public record ApiMessage(String role, String content, List<ToolCall> toolCalls, 
                 Map.of(), Objects.requireNonNull(name, "name"));
     }
 
-    /** Content sent to models, with a portable identity marker for APIs that ignore {@code name}. */
+    /** Content sent to models, with a portable identity envelope for APIs that ignore {@code name}. */
     public String modelContent() {
         return modelContent(true);
     }
 
-    /** Content sent to models, optionally carrying the portable player identity marker. */
+    /** Content sent to models, optionally carrying the portable player identity envelope. */
     public String modelContent(boolean includePlayerPrefix) {
         if (!includePlayerPrefix || !role.equals("user") || name == null || content == null) {
             return content;
         }
-        return "<player>" + escapePlayerName(name) + "</player>\n" + content;
+        return "<player>" + escapeXml(name) + "</player>\n<message>"
+                + escapeXml(content) + "</message>";
     }
 
-    private static String escapePlayerName(String value) {
+    private static String escapeXml(String value) {
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 

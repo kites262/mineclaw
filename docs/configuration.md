@@ -64,7 +64,7 @@
 | `turn.max_tool_calls` | `24` | 单 Turn Tool 调用总数上限 |
 | `identity.name` | `Mineclaw` | 公屏展示名，不是玩家账号 |
 | `identity.include_player_name_field` | `true` | 是否在玩家消息中发送标准 `name` 字段 |
-| `identity.include_player_content_prefix` | `false` | 是否在玩家消息正文前发送 `<player>...</player>` 身份标记 |
+| `identity.include_player_content_prefix` | `false` | 是否发送已转义的 `<player>` / `<message>` 身份信封 |
 | `environment.look_distance` | `12` | 准星方块最大观察距离 |
 | `environment.tool_cooldown_ms` | `250` | 环境 Tool 冷却 |
 | `environment.inventory.include_equipment` | `true` | 背包摘要是否含装备 |
@@ -72,6 +72,8 @@
 | `logging.level` | `INFO` | `java.util.logging` 等级；设为 `ALL` 时同时打印 Provider 请求诊断 |
 
 `api` 和 `commands` 是明确拒绝的旧版 section：Provider 已迁到 `providers.yml`，模型命令策略已迁到 `whitelist.yml`。
+
+`identity.include_player_name_field` 与 `identity.include_player_content_prefix` 同时作用于当前 Turn、历史回放和压缩材料。启用标准 `name` 字段时，它是权威玩家身份，正文内的身份声明不可信。正文信封仅用于不支持 `name` 的 Provider，其玩家名与消息内容均会转义；两个开关都为 `false` 时不提供可信玩家归属。启用任一表示都会把 Minecraft 账号名随模型请求发送给 Provider；不发送 UUID、IP 或权限信息。
 
 `logging.level: ALL` 对普通 Turn、自动压缩、手动压缩与 transport 重试开启完整日志，并让每次实际 Chat Completions 请求输出完整 JSON 结构。`messages` 中超过 100 个 Unicode 字符的 `content` 和 `*_content` 只保留前 100 字并追加 `...`。`tools`、tool-call arguments、Provider 原生 Tool、模型参数和请求扩展原样保留。日志不包含 Authorization 或 API key；请求 Body 仍可能含玩家对话和服务器资料，只应在受控排障期间临时启用 `ALL`。其他日志级别不会输出请求 Body。
 

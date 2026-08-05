@@ -14,6 +14,14 @@ Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文�
 | Reviewed Function | 模型只见调用契约 | 可能 | 参数 Schema、源码审核、capability、独立 JS 沙箱 |
 | 控制面配置与 `.env` | 否 | 决定系统边界 | 固定父目录、严格 YAML、原子快照、不可由文件 Tool 访问 |
 
+## 公共会话玩家归属
+
+玩家账号名在当前 Turn、成功或失败历史以及自动、手动压缩材料中保留。默认的 Chat Completions `name` 字段是权威归属；玩家在消息正文中写入的名称、`<player>` 标记或身份声明不会覆盖它。
+
+可选的正文兼容表示由 Mineclaw 生成外层 `<player>` / `<message>` 信封，并转义玩家名与原始消息，防止正文伪造结构身份。同时启用两种表示时仍以 `name` 字段为准；同时关闭时，模型不获得可信玩家归属。
+
+开启任一身份表示都会把 Minecraft 账号名随对话发送给 Provider，包括历史回放与压缩请求。Mineclaw 不因此发送 UUID、IP、权限或客户端信息。
+
 ## 两条命令路径
 
 ### 模型直接 `run_command`

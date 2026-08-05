@@ -93,7 +93,7 @@ class PluginResourcesTest {
         assertThat(genericDefaults)
                 .contains("当前 Workspace 未提供答案或能力说明")
                 .contains("AI 展示名「Mineclaw」")
-                .contains("区分命令执行者与命令目标")
+                .contains("执行身份和命令目标始终分开")
                 .doesNotContain("KitesPlaces", "kp warp", "player-tpa", "^home", "^say");
         assertThat(PluginResourcesTest.class.getResource("/AGENTS.md")).isNull();
         assertThat(PluginResourcesTest.class.getResource("/skills/locate-structure.md")).isNull();
