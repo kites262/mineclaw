@@ -194,11 +194,11 @@ public final class ToolDispatcher {
             case LIST -> fileAsync(() -> files.list(arguments, limits(config)), preserveFailures);
             case READ -> fileAsync(() -> files.read(arguments, limits(config)), preserveFailures);
             case GREP -> fileAsync(() -> files.grep(arguments, limits(config)), preserveFailures);
-            case LOOK_BLOCK, FEET_BLOCK, INVENTORY, ONLINE_PLAYERS -> preserveFailures
-                    ? environment.execute(handler.wireName(), turnPlayer.id(), turnPlayer.name(),
+            case PLAYER_SNAPSHOT, ITEM_INSPECT, BLOCK_INSPECT, ONLINE_PLAYERS -> preserveFailures
+                    ? environment.execute(handler.wireName(), arguments, turnPlayer.id(), turnPlayer.name(),
                             environment(config)).thenApply(ToolExecution::completed)
                     : environment.execute(
-                            handler.wireName(), turnPlayer.id(), turnPlayer.name(),
+                            handler.wireName(), arguments, turnPlayer.id(), turnPlayer.name(),
                             environment(config))
                     .handle((result, failure) -> failure == null
                             ? ToolExecution.completed(result)
@@ -351,7 +351,7 @@ public final class ToolDispatcher {
     private static EnvironmentTools.Settings environment(MineclawConfig config) {
         MineclawConfig.Environment values = config.environment();
         return new EnvironmentTools.Settings(values.lookDistance(), values.toolCooldownMillis(),
-                values.inventory().includeEquipment(), values.inventory().maxSlots());
+                values.itemInspect().maxSlots(), values.itemInspect().maxOutputChars());
     }
 
     private static CompletableFuture<ToolExecution> completedInvalid(String message) {

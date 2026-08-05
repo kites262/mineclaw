@@ -61,13 +61,17 @@ Skill 应写清：触发场景、准确名称、参数 Schema、前置观察、�
 
 | handler | 作用 | 副作用 |
 | --- | --- | --- |
-| `look_block` | 当前对话玩家准星方块与坐标 | 无 |
-| `feet_block` | 当前对话玩家脚下方块与坐标 | 无 |
-| `inventory` | 当前对话玩家的脱敏背包摘要 | 无 |
+| `player_snapshot` | 当前对话玩家的位置、生存与移动状态、局部环境和状态效果 | 无 |
+| `item_inspect` | 当前对话玩家的背包摘要或指定物品详情 | 无 |
+| `block_inspect` | 当前对话玩家准星目标或脚下方块的结构化状态 | 无 |
 | `online_players` | 当前发起人和在线账号名 | 无 |
 | `list` / `read` / `grep` | 检索隔离 Workspace | 无 |
 | `call_function` | 按准确名称和参数进入 Function | 由目标 Function 决定 |
 | `run_command` | 模型直接申请玩家/控制台命令 | 白名单或玩家审批后可能有 |
+
+环境感知 Tool 只读取本轮发起玩家：`player_snapshot` 不接受参数；`item_inspect` 使用 `inventory`、`slot`、主副手或装备位模式；`block_inspect` 使用 `look` 或 `feet` 模式。返回结果是有界结构化 JSON，不包含原始 NBT、PDC、完整组件、容器内容或其他私有方块实体数据。
+
+v1.2.0 删除了 `look_block`、`feet_block` 和 `inventory`。Function capability 必须分别迁移到 `native_tool.call.block_inspect` 或 `native_tool.call.item_inspect`，并传入对应模式；旧 handler 会被拒绝。
 
 Provider 能力属于 `providers.yml providers.*.tools`，payload 按 Provider 原生格式进入请求。目前默认示例是 MiMo `web_search`。这类 Tool 不会转换为 function，也不能被 JavaScript Function 通过 `native_tool.call` 间接调用；Function 的 native capability 只面向本地 handler。
 

@@ -1,6 +1,6 @@
 # 运维手册
 
-本文覆盖 Mineclaw 1.1.0 的安装、迁移、日常管理、诊断、构建和发布检查。
+本文覆盖 Mineclaw 1.2.0 的安装、迁移、日常管理、诊断、构建和发布检查。
 
 ## 运行要求
 
@@ -14,7 +14,7 @@
 ## 全新安装
 
 1. 停止服务端。
-2. 把 `Mineclaw-1.1.0.jar` 放入 `plugins/`。
+2. 把 `Mineclaw-1.2.0.jar` 放入 `plugins/`。
 3. 启动一次，使插件生成 `plugins/Mineclaw/`，再停止服务端。
 4. 在 `.env` 写入 `MINECLAW_API_KEY`，按需编辑 `providers.yml`。
 5. 审核默认 `whitelist.yml`、`functions.yml` 和 Workspace。
@@ -48,6 +48,23 @@ v1.0.0 是破坏性版本：不保留旧配置读取、字段别名、自动迁�
 7. 保留备份到完成一个可接受的回滚观察期。
 
 回滚到 v0.x 时必须同时恢复旧 JAR 和完整旧数据目录。不要让两个大版本共享同一套可写配置。
+
+## 从 v1.1.x 升级
+
+v1.2.0 替换了环境感知 Tool 名称和对应配置，不提供旧名称兼容层：
+
+| v1.1.x | v1.2.0 |
+| --- | --- |
+| `look_block` | `block_inspect`，`mode: look` |
+| `feet_block` | `block_inspect`，`mode: feet` |
+| `inventory` | `item_inspect`，`mode: inventory` |
+| `environment.inventory.max_slots` | `environment.item_inspect.max_slots` |
+| `environment.inventory.include_equipment` | 删除；摘要始终包含存储槽、装备位、主手和副手 |
+| 无 | `environment.item_inspect.max_output_chars` |
+| 无 | `identity.include_player_name_field`，默认 `true` |
+| 无 | `identity.include_player_content_prefix`，默认 `false` |
+
+停服并备份后，替换 JAR，让默认资源生成到临时目录以核对新结构。更新现有 `config.yml`、`tools.yml`、Function 的 `native_tool.call.<handler>` capability 以及 Workspace Skill 中的调用名称，再启动并运行 Tool/Function 校验。建议在现有配置中显式写入两个玩家身份开关；默认标准 `name` 字段会把当前与历史玩家的 Minecraft 账号名发送给 Provider。v1.2.0 同时将默认 `context.max_messages` 调整为 `240`、Turn Tool 往返/调用预算调整为 `80`/`240`、环境 Tool 冷却调整为 `10 ms`；现有配置不会被 Seed 自动覆盖，需由管理员决定是否同步。严格 Schema 会拒绝残留的 `environment.inventory`；旧 handler 不可注册或经 Function 间接调用。
 
 ## 管理命令与权限
 
@@ -157,26 +174,28 @@ Provider 返回上下文溢出时，Mineclaw 最多做一次压缩恢复和一�
 产物：
 
 ```text
-build/plugins/Mineclaw-1.1.0.jar
+build/plugins/Mineclaw-1.2.0.jar
 ```
 
 构建使用 Java toolchain 25、Gradle Wrapper 9.5.0 和 dependency locking。JAR 会合并运行时依赖，排除签名文件、module descriptor 和所有 `.env`，并加入项目 LICENSE、NOTICE 与第三方许可证资源。
 
-## v1.1.0 发布检查
+## v1.2.0 发布检查
 
 发布候选至少完成：
 
-1. 版本一致：Gradle、`paper-plugin.yml`、README、产物名均为 `1.1.0`。
+1. 版本一致：Gradle、`paper-plugin.yml`、README、产物名均为 `1.2.0`。
 2. `./gradlew --no-daemon clean test assemblePlugin` 全部通过。
 3. 连续两次 clean build 的 JAR SHA-256 一致。
 4. JAR 中不存在 `.env`、凭据、重复 entry 或签名残留，存在 LICENSE/NOTICE/第三方声明。
 5. `paper-plugin.yml` 声明 Paper API 26.2、Folia supported 和完整权限。
 6. Seed 首次生成与已有文件不覆盖两条路径都通过。
 7. 四文件控制面成功/失败原子重载演练通过。
-8. Tool/Function validate、内置药水、结构定位、拒绝/超时/取消、命令错误语义通过。
-9. usage、自动压缩、手动即时/排队压缩、overflow 单次恢复通过。
+8. Tool/Function validate、新环境 Tool、内置药水、结构定位、拒绝/超时/取消、命令错误语义通过。
+9. usage、多玩家身份回放、自动压缩、手动即时/排队压缩、overflow 单次恢复通过。
 10. README 和 docs 的本地链接有效，示例只使用 v1 Schema，源码与构建产物完成 secret scan。
 11. 在 Paper 26.2 和 Folia 26.2 的 Java 25 运行环境做 smoke test。
 12. 生成 release notes、记录 JAR SHA-256；仅在检查结论明确后创建 tag 和发布。
+
+环境 Tool smoke test 必须覆盖 `player_snapshot`、`item_inspect` 的摘要/指定槽位/空槽/截断，以及 `block_inspect` 的 `look`/`feet`/无目标路径；同时确认旧 handler 在目录和 `native_tool.call` 中均被拒绝。
 
 仓库操作本身不需要提交或推送即可完成构建与审计；部署、tag、GitHub Release 和生产迁移应作为单独的显式变更步骤执行。

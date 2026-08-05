@@ -45,16 +45,16 @@ class ToolCatalogLoaderTest {
         assertThat(catalog.definitions()).hasSize(9);
         assertThat(catalog.enabledDefinitions()).hasSize(9);
         assertThat(catalog.invalidDefinitions()).isEmpty();
-        assertThat(catalog.findEnabled("inventory")).get().satisfies(tool -> {
-            assertThat(tool.registeredHandler()).contains(ToolDefinition.Handler.INVENTORY);
-            assertThat(tool.modelFunctionName()).isEqualTo("inventory");
+        assertThat(catalog.findEnabled("item_inspect")).get().satisfies(tool -> {
+            assertThat(tool.registeredHandler()).contains(ToolDefinition.Handler.ITEM_INSPECT);
+            assertThat(tool.modelFunctionName()).isEqualTo("item_inspect");
         });
         assertThat(catalog.findEnabled("call_function")).get().satisfies(tool ->
                 assertThat(tool.registeredHandler()).contains(ToolDefinition.Handler.CALL_FUNCTION));
         JsonArray wire = catalog.toChatCompletionsTools();
         assertThat(wire).hasSize(9);
         assertThat(FunctionCatalogLoader.nativeCapabilityAllowlist(catalog))
-                .contains("inventory", "read")
+                .contains("item_inspect", "read")
                 .doesNotContain("call_function", "mimo_web_search");
     }
 

@@ -16,7 +16,7 @@ class PluginResourcesTest {
     void paperDescriptorMatchesRuntimeAndDeclaresEveryPermission() throws Exception {
         YamlConfiguration descriptor = yaml("/paper-plugin.yml");
         assertThat(descriptor.getString("name")).isEqualTo("Mineclaw");
-        assertThat(descriptor.getString("version")).isEqualTo("1.1.0");
+        assertThat(descriptor.getString("version")).isEqualTo("1.2.0");
         assertThat(descriptor.getString("main")).isEqualTo("cc.kites.mineclaw.MineclawPlugin");
         assertThat(descriptor.getString("api-version")).isEqualTo("26.2");
         assertThat(descriptor.getBoolean("folia-supported")).isTrue();
@@ -116,6 +116,13 @@ class PluginResourcesTest {
         assertThat(tools.getMapList("tools")).hasSize(9).allSatisfy(tool -> {
             assertThat(tool.keySet()).isEqualTo(Set.of("handler", "enabled", "payload"));
         });
+        java.util.List<String> handlers = tools.getMapList("tools").stream()
+                .map(tool -> String.valueOf(tool.get("handler")))
+                .toList();
+        assertThat(handlers)
+                .containsExactly("player_snapshot", "item_inspect", "block_inspect", "online_players",
+                        "call_function", "list", "read", "grep", "run_command")
+                .doesNotContain("look_block", "feet_block", "inventory");
         Map<?, ?> runCommand = tools.getMapList("tools").stream()
                 .filter(tool -> tool.get("handler").equals("run_command"))
                 .findFirst()

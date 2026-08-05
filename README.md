@@ -9,7 +9,7 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
 
 <p>
-  <a href="https://github.com/kites262/mineclaw/releases/tag/1.1.0"><img alt="Mineclaw 1.1.0" src="https://img.shields.io/badge/Mineclaw-1.1.0-4c8bf5"></a>
+  <a href="https://github.com/kites262/mineclaw/releases/tag/1.2.0"><img alt="Mineclaw 1.2.0" src="https://img.shields.io/badge/Mineclaw-1.2.0-4c8bf5"></a>
   <img alt="Minecraft 26.2" src="https://img.shields.io/badge/Minecraft-26.2-62b47a?logo=minecraft">
   <img alt="Paper and Folia" src="https://img.shields.io/badge/Paper%20%2F%20Folia-native-efc75e">
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-e76f00?logo=openjdk">
@@ -59,8 +59,8 @@ It feels like a long-term companion on the server: it knows where information li
 - **🗂️ A safe Workspace.** Server knowledge can accumulate locally in ordinary files that the Agent autonomously discovers, reads, and maintains—not only in predefined Skills or Tools.<br>
   **安全的 Workspace。** 本服知识可以持续积累在普通文件中，由 Agent 自主发现、读取和管理，而不只存在于预定义的 Skill 或 Tool 里。
 
-- **👁️ Awareness of the live world.** Blocks, position, equipment, inventory, and online players become part of how a request is understood.<br>
-  **对实时世界的感知。** 方块、位置、装备、背包与在线玩家都会成为理解请求的一部分。
+- **👁️ Awareness of the live world.** Structured player snapshots, item details, block state, and online players become part of how a request is understood.<br>
+  **对实时世界的感知。** 结构化玩家快照、物品详情、方块状态与在线玩家都会成为理解请求的一部分。
 
 - **🧭 A path from goals to action.** The Agent can break down a natural-language goal, gather missing facts, plan the steps, and use server capabilities to move the task forward.<br>
   **从目标到行动。** Agent 能拆解自然语言目标、补齐事实、规划步骤，并调用服务器能力推进任务。
@@ -176,8 +176,8 @@ Mineclaw 位于玩家、世界、服务器知识和插件生态的交汇处。�
 > **Runtime target:** Paper 26.2 or Folia 26.2 with Java 25. Other server, Minecraft, and Java versions are outside the current compatibility promise.<br>
 > **运行目标：** Paper 26.2 或 Folia 26.2 + Java 25。其他服务端、Minecraft 或 Java 版本不在当前兼容承诺内。
 
-1. Download `Mineclaw-1.1.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) and place it in the server's `plugins/` directory.<br>
-   从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.1.0.jar`，放入服务端 `plugins/`。
+1. Download `Mineclaw-1.2.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) and place it in the server's `plugins/` directory.<br>
+   从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.2.0.jar`，放入服务端 `plugins/`。
 
 2. Start the server once so Mineclaw can generate its default files, then stop it.<br>
    启动一次，让 Mineclaw 生成默认文件，然后停止服务端。
@@ -225,6 +225,10 @@ The default Provider example includes a 128K context window, 16K maximum output,
 > [!IMPORTANT]
 > **Upgrading from v0.x:** v1.0.0 is an incompatible major release. It does not read old schemas and has no compatibility conversion layer. Back up the old directory, let v1 generate new files, then migrate the configuration intent according to the [migration guide](docs/operations.md#从-v0x-迁移). Do not copy the old configuration over the new one.<br>
 > **从 v0.x 升级：** v1.0.0 是不兼容的大版本，不读取旧 Schema，也没有兼容转换层。先备份旧目录，用 v1 生成全新文件，再按[迁移说明](docs/operations.md#从-v0x-迁移)迁移配置意图；不要把旧配置整份覆盖回来。
+
+> [!IMPORTANT]
+> **Upgrading from v1.1.x:** v1.2.0 replaces `look_block`, `feet_block`, and `inventory` with `block_inspect` and `item_inspect`; there are no compatibility aliases. Update `tools.yml`, Function capabilities, Workspace Skills, and the renamed environment configuration before starting the new JAR. See the [operations guide](docs/operations.md#从-v11x-升级).<br>
+> **从 v1.1.x 升级：** v1.2.0 用 `block_inspect` 和 `item_inspect` 替换 `look_block`、`feet_block` 与 `inventory`，不提供兼容别名。启动新 JAR 前必须更新 `tools.yml`、Function capability、Workspace Skill 和已改名的环境配置；步骤见[运维手册](docs/operations.md#从-v11x-升级)。
 
 ## 🌱 Let the Agent grow with the server
 
@@ -277,8 +281,8 @@ Read the complete trust model, command paths, JavaScript runtime, and result sem
 
 **长对话也有自己的整理节奏**
 
-A public Session gives players and Mineclaw a shared history. Earlier plans, failures, and completed steps become context for later collaboration. As the conversation grows, Mineclaw compacts older history while preserving recent turns and task evidence that still matters.<br>
-公共 Session 让玩家与 Mineclaw 共享一段连续经历：前面的计划、遇到的失败和已经完成的步骤，会成为后续协作的背景。对话逐渐变长时，Mineclaw 会整理较早的历史，同时保留近期内容和仍然重要的任务证据。
+A public Session gives players and Mineclaw a shared history. When player attribution is enabled, each request keeps its Minecraft account attribution through replay and compaction, so plans, failures, preferences, and completed steps remain attached to the right participant. As the conversation grows, Mineclaw compacts older history while preserving recent turns and task evidence that still matters.<br>
+公共 Session 让玩家与 Mineclaw 共享一段连续经历。启用玩家归属时，每条请求在历史回放和压缩中都保留 Minecraft 账号归属，使计划、失败、偏好和已完成步骤始终对应正确参与者。对话变长时，Mineclaw 会整理较早历史，同时保留近期内容和仍然重要的任务证据。
 
 The default model configuration provides a 128K context window, 16K maximum output, and a 100K automatic compaction threshold. Administrators can also run `/mineclaw compact` at any time. Token accounting, queuing, and overflow recovery are covered in the [configuration reference](docs/configuration.md#模型限制与自动压缩).<br>
 默认模型配置提供 128K 上下文、16K 最大输出和 100K 自动整理界限；管理员也可以随时使用 `/mineclaw compact` 主动整理。Token 计算、排队和溢出恢复见[配置参考](docs/configuration.md#模型限制与自动压缩)。
@@ -324,8 +328,8 @@ Public chat access uses `mineclaw.command.chat` and is enabled by default. See t
 - 🧰 [Operations guide](docs/operations.md) — Installation, v0.x migration, commands, diagnostics, builds, and release checks.<br>
   [运维手册](docs/operations.md) — 安装、v0.x 迁移、命令、诊断、构建和发布检查。
 
-- 📝 [Changelog](CHANGELOG.md) — Breaking changes and new capabilities in v1.0.0.<br>
-  [更新记录](CHANGELOG.md) — v1.0.0 的破坏性变化与新增能力。
+- 📝 [Changelog](CHANGELOG.md) — Release history, breaking changes, and new capabilities.<br>
+  [更新记录](CHANGELOG.md) — 版本历史、破坏性变化与新增能力。
 
 ## 🛠️ Build from source
 
@@ -334,12 +338,12 @@ Public chat access uses `mineclaw.command.chat` and is enabled by default. See t
 ```bash
 git clone https://github.com/kites262/mineclaw.git
 cd mineclaw
-git checkout 1.1.0
+git checkout 1.2.0
 ./gradlew --no-daemon clean test assemblePlugin
 ```
 
-The deployable artifact is `build/plugins/Mineclaw-1.1.0.jar`. The JAR uses reproducible file ordering and timestamps and includes Apache-2.0, NOTICE, and third-party license resources.<br>
-可部署产物位于 `build/plugins/Mineclaw-1.1.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
+The deployable artifact is `build/plugins/Mineclaw-1.2.0.jar`. The JAR uses reproducible file ordering and timestamps and includes Apache-2.0, NOTICE, and third-party license resources.<br>
+可部署产物位于 `build/plugins/Mineclaw-1.2.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
 
 ## ✅ Compatibility
 

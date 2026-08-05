@@ -2,6 +2,39 @@
 
 Mineclaw 使用语义化版本。v1.0.0 是重新设计的第一个稳定大版本，与全部 v0.x 配置不兼容。
 
+## 1.2.0 — 2026-08-05
+
+### 高级环境感知
+
+- 新增 `player_snapshot`，一次读取当前对话玩家的位置、生存与移动状态、局部世界环境和有效状态效果。
+- 新增 `item_inspect`，支持紧凑背包摘要与指定存储槽、主副手和装备位详情，并以槽位数和输出字符数双重限制约束结果。
+- 新增 `block_inspect`，统一检查准星目标或脚下方块，返回结构化 BlockData、光照、生物群系和有界方块实体类别。
+- 三个新 Tool 均绑定本轮发起玩家，沿用环境 Tool 冷却、Folia 调度、取消、异常归一化和 Turn 快照语义。
+
+### 公共会话身份
+
+- 启用任一玩家身份表示时，当前 Turn、成功或失败历史以及自动、手动压缩材料保留每条玩家消息的 Minecraft 账号归属。
+- 默认使用 Chat Completions 的标准 `name` 字段；可选启用已转义的 `<player>` / `<message>` 正文信封作为 Provider 兼容表示。
+- 标准 `name` 字段开启时是唯一权威身份来源；玩家正文中的身份标记或声明始终视为不可信数据。
+
+### 稳定性
+
+- 修复 `item_inspect` 读取普通耐久物品时错误调用自定义最大耐久 API，导致背包摘要返回 `IllegalStateException` 的问题。
+- 普通物品使用材质默认最大耐久；仅在物品显式覆盖最大耐久时读取对应元数据。
+
+### 默认运行预算
+
+- 默认历史消息上限从 `24` 调整为 `240`，单 Turn Tool 往返与调用上限从 `8`/`24` 调整为 `80`/`240`。
+- 同一玩家、同一环境 Tool 的默认冷却从 `250 ms` 调整为 `10 ms`。
+
+### Breaking changes
+
+- 删除 `look_block`；改用 `block_inspect` 的 `look` 模式。
+- 删除 `feet_block`；改用 `block_inspect` 的 `feet` 模式。
+- 删除 `inventory`；改用 `item_inspect` 的 `inventory` 模式。
+- 不提供旧 handler 的别名或兼容转发。自定义 `tools.yml`、Function capability 和 Workspace Skill 必须更新为新名称。
+- 环境配置将 `environment.inventory` 替换为 `environment.item_inspect`，并新增 `max_output_chars` 结果预算。
+
 ## 1.1.0 — 2026-08-04
 
 ### 请求调试

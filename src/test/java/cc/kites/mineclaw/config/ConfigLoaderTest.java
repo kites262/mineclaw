@@ -17,12 +17,16 @@ class ConfigLoaderTest {
 
         assertThat(config.schema()).isEqualTo(1);
         assertThat(config.logging().requestDiagnosticsEnabled()).isFalse();
-        assertThat(config.context()).isEqualTo(new MineclawConfig.Context(24));
+        assertThat(config.context()).isEqualTo(new MineclawConfig.Context(240));
         assertThat(config.chat().publicPrefix()).isEqualTo("@ai");
         assertThat(config.tools().enabled()).isTrue();
         assertThat(config.identity().name()).isEqualTo("Mineclaw");
         assertThat(config.identity().includePlayerNameField()).isTrue();
         assertThat(config.identity().includePlayerContentPrefix()).isFalse();
+        assertThat(config.turn()).isEqualTo(new MineclawConfig.Turn(80, 240));
+        assertThat(config.environment().toolCooldownMillis()).isEqualTo(10L);
+        assertThat(config.environment().itemInspect())
+                .isEqualTo(new MineclawConfig.Environment.ItemInspect(36, 12_000));
     }
 
     @Test
@@ -93,6 +97,16 @@ class ConfigLoaderTest {
         assertThatThrownBy(() -> loader.parse("schema: 1\nchat: true\n"))
                 .isInstanceOf(ConfigException.class)
                 .hasMessageContaining("chat must be a mapping");
+        assertThatThrownBy(() -> loader.parse("schema: 1\nenvironment: {inventory: {max_slots: 36}}\n"))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("environment.inventory is not a supported field");
+        assertThatThrownBy(() -> loader.parse("""
+                schema: 1
+                environment:
+                  item_inspect: {max_slots: 37, max_output_chars: 12000}
+                """))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("environment.item_inspect.max_slots must not exceed 36");
     }
 
     @Test

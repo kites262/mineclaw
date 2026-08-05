@@ -1,6 +1,6 @@
 schema: 1
 context:
-  max_messages: 24
+  max_messages: 240
 chat:
   public_prefix: '@ai'
   wake_pattern: ''
@@ -40,17 +40,17 @@ file_tools:
   max_depth: 4
   timeout: 3000
 turn:
-  max_tool_rounds: 8
-  max_tool_calls: 24
+  max_tool_rounds: 80
+  max_tool_calls: 240
 identity:
   name: 'Mineclaw'
   include_player_name_field: true
   include_player_content_prefix: false
 environment:
   look_distance: 12
-  tool_cooldown_ms: 250
-  inventory:
-    include_equipment: true
+  tool_cooldown_ms: 10
+  item_inspect:
     max_slots: 36
+    max_output_chars: 12000
 logging:
   level: 'INFO'

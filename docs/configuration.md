@@ -1,6 +1,6 @@
 # 配置参考
 
-本文对应 Mineclaw 1.1.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
+本文对应 Mineclaw 1.2.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
 
 ## 文件与生效时机
 
@@ -29,7 +29,7 @@
 | 路径 | 默认值 | 含义 |
 | --- | ---: | --- |
 | `schema` | `1` | 固定 Schema 版本 |
-| `context.max_messages` | `24` | 放入模型请求的历史消息上限；Session 内部仍以完整 Turn 保存 |
+| `context.max_messages` | `240` | 放入模型请求的历史消息上限；Session 内部仍以完整 Turn 保存 |
 | `chat.public_prefix` | `@ai` | 公屏前缀 |
 | `chat.wake_pattern` | 空 | 可选 Java 正则唤醒规则；与前缀不能同时为空 |
 | `chat.reply_max_chars` | `2000` | 最终公屏回复字符上限 |
@@ -60,15 +60,15 @@
 | `file_tools.max_results` | `100` | `list`/`grep` 结果上限 |
 | `file_tools.max_depth` | `4` | Workspace 列目录深度上限 |
 | `file_tools.timeout` | `3000` | 文件操作毫秒超时 |
-| `turn.max_tool_rounds` | `8` | 单 Turn Tool 往返上限 |
-| `turn.max_tool_calls` | `24` | 单 Turn Tool 调用总数上限 |
+| `turn.max_tool_rounds` | `80` | 单 Turn Tool 往返上限 |
+| `turn.max_tool_calls` | `240` | 单 Turn Tool 调用总数上限 |
 | `identity.name` | `Mineclaw` | 公屏展示名，不是玩家账号 |
 | `identity.include_player_name_field` | `true` | 是否在玩家消息中发送标准 `name` 字段 |
 | `identity.include_player_content_prefix` | `false` | 是否发送已转义的 `<player>` / `<message>` 身份信封 |
 | `environment.look_distance` | `12` | 准星方块最大观察距离 |
-| `environment.tool_cooldown_ms` | `250` | 环境 Tool 冷却 |
-| `environment.inventory.include_equipment` | `true` | 背包摘要是否含装备 |
-| `environment.inventory.max_slots` | `36` | 背包摘要最大槽位数 |
+| `environment.tool_cooldown_ms` | `10` | 同一玩家、同一环境 Tool 的调用冷却（毫秒） |
+| `environment.item_inspect.max_slots` | `36` | `item_inspect` 背包摘要最多检查的存储槽位数 |
+| `environment.item_inspect.max_output_chars` | `12000` | `item_inspect` 背包摘要最大序列化字符数 |
 | `logging.level` | `INFO` | `java.util.logging` 等级；设为 `ALL` 时同时打印 Provider 请求诊断 |
 
 `api` 和 `commands` 是明确拒绝的旧版 section：Provider 已迁到 `providers.yml`，模型命令策略已迁到 `whitelist.yml`。
@@ -192,20 +192,37 @@ console: []
 ```yaml
 schema: 2
 tools:
-  - handler: inventory
+  - handler: item_inspect
     enabled: true
     payload:
       type: function
       function:
-        name: inventory
-        description: 读取当前对话玩家的脱敏背包摘要
+        name: item_inspect
+        description: 读取当前对话玩家的背包摘要或指定物品详情
         parameters:
           type: object
-          properties: {}
+          properties:
+            mode:
+              type: string
+              enum: [inventory, slot, main_hand, off_hand, helmet, chestplate, leggings, boots]
+            slot:
+              type: integer
+              minimum: 0
+              maximum: 35
           additionalProperties: false
 ```
 
-`handler` 同时是注册实现身份，必须和 `payload.function.name` 一致。不存在自定义 handler、旧版 `id`、`metadata` 或 `type: mineclaw`。发行版注册：`look_block`、`feet_block`、`inventory`、`online_players`、`call_function`、`list`、`read`、`grep`、`run_command`。
+`handler` 同时是注册实现身份，必须和 `payload.function.name` 一致。不存在自定义 handler、旧版 `id`、`metadata` 或 `type: mineclaw`。发行版注册：`player_snapshot`、`item_inspect`、`block_inspect`、`online_players`、`call_function`、`list`、`read`、`grep`、`run_command`。
+
+三个环境感知 Tool 均绑定本轮对话发起玩家，不接受任意玩家参数：
+
+- `player_snapshot` 无参数，返回位置、生存与移动状态、局部环境和有效状态效果。
+- `item_inspect` 默认使用 `inventory` 模式；`slot` 模式必须提供合法存储槽编号，其他模式不得提供 `slot`。背包摘要同时受 `max_slots` 和 `max_output_chars` 限制，并报告截断状态。
+- `block_inspect` 默认使用 `look` 模式，可提供不超过 `environment.look_distance` 的距离；`feet` 模式不得提供距离。没有准星目标或物品为空时以成功状态返回明确空值。
+
+v1.2.0 不再注册 `look_block`、`feet_block` 和 `inventory`，也不提供兼容别名。替代调用依次为 `block_inspect` 的 `look` 模式、`block_inspect` 的 `feet` 模式和 `item_inspect` 的 `inventory` 模式。
+
+`environment.look_distance` 必须在 `1–128`。`environment.item_inspect.max_slots` 必须在 `1–36`，`max_output_chars` 必须在 `1024–65536`。`inventory` 模式始终按稳定顺序检查存储槽、装备位、主手和副手，不再提供 `include_equipment` 开关。
 
 `tools.enabled`、`tools.disabled`、条目自身 `enabled` 和 payload 校验共同决定可用性。无效条目隔离诊断；使用 `/mineclaw tools validate` 检查，不会实际执行 Tool。
 

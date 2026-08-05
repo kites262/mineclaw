@@ -14,6 +14,7 @@ import cc.kites.mineclaw.workspace.ToolCatalog;
 import cc.kites.mineclaw.workspace.ToolDefinition;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.papermc.paper.threadedregions.scheduler.GlobalRegionScheduler;
 import org.bukkit.Server;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -271,6 +272,136 @@ class ToolDispatcherTest {
     }
 
     @Test
+    void functionsCanInvokeCurrentEnvironmentHandlersThroughNativeToolCall() throws Exception {
+        try (JavaScriptWorkflowRuntime runtime = javascriptRuntime()) {
+            ToolDispatcher dispatcher = offlineEnvironmentJavascriptDispatcher(runtime);
+            String source = """
+                    async function onCall(ctx, api) {
+                      const snapshot = await api.invoke({
+                        action: "native_tool.call",
+                        input: {name: "player_snapshot", arguments: {}}
+                      });
+                      const item = await api.invoke({
+                        action: "native_tool.call",
+                        input: {name: "item_inspect", arguments: {}}
+                      });
+                      const block = await api.invoke({
+                        action: "native_tool.call",
+                        input: {name: "block_inspect", arguments: {}}
+                      });
+                      return {status: "ok", output: {
+                        player_snapshot: snapshot.status,
+                        item_inspect: item.status,
+                        block_inspect: block.status,
+                        snapshot_message: snapshot.output.message,
+                        item_message: item.output.message,
+                        block_message: block.output.message
+                      }};
+                    }
+                    """;
+            Set<String> nativeNames = Set.of("player_snapshot", "item_inspect", "block_inspect");
+            FunctionCatalog functions = functionCatalog(runtime, "environment_snapshot", source,
+                    List.of(
+                            "native_tool.call.player_snapshot",
+                            "native_tool.call.item_inspect",
+                            "native_tool.call.block_inspect"),
+                    emptySchema(), nativeNames);
+            ToolDefinition callFunction = callFunctionDefinition();
+            ToolCatalog tools = new ToolCatalog(List.of(
+                    callFunction,
+                    environmentDefinition("player_snapshot"),
+                    environmentDefinition("item_inspect"),
+                    environmentDefinition("block_inspect")), List.of());
+
+            ToolResult result = completed(dispatcher.execute(
+                    tools, functions, callFunction, call("environment_snapshot", "{}"),
+                    "call-environment", turnPlayer(), MineclawConfig.defaults())
+                    .get(5, TimeUnit.SECONDS));
+
+            assertThat(result.status()).isEqualTo("ok");
+            JsonObject output = result.output().getAsJsonObject("output");
+            assertThat(output)
+                    .extracting(
+                            value -> value.get("player_snapshot").getAsString(),
+                            value -> value.get("item_inspect").getAsString(),
+                            value -> value.get("block_inspect").getAsString())
+                    .containsExactly("denied", "denied", "denied");
+            assertThat(output)
+                    .extracting(
+                            value -> value.get("snapshot_message").getAsString(),
+                            value -> value.get("item_message").getAsString(),
+                            value -> value.get("block_message").getAsString())
+                    .containsOnly("当前对话玩家已离线");
+        }
+    }
+
+    @Test
+    void retiredEnvironmentHandlersRemainUnavailableToNativeToolCall() throws Exception {
+        try (JavaScriptWorkflowRuntime runtime = javascriptRuntime()) {
+            ToolDispatcher dispatcher = javascriptDispatcher(new AtomicInteger(), runtime);
+            String source = """
+                    async function onCall(ctx, api) {
+                      const look = await api.invoke({
+                        action: "native_tool.call",
+                        input: {name: "look_block", arguments: {}}
+                      });
+                      const feet = await api.invoke({
+                        action: "native_tool.call",
+                        input: {name: "feet_block", arguments: {}}
+                      });
+                      const inventory = await api.invoke({
+                        action: "native_tool.call",
+                        input: {name: "inventory", arguments: {}}
+                      });
+                      return {status: "ok", output: {
+                        look_status: look.status,
+                        look_error: look.output.error_code,
+                        feet_status: feet.status,
+                        feet_error: feet.output.error_code,
+                        inventory_status: inventory.status,
+                        inventory_error: inventory.output.error_code
+                      }};
+                    }
+                    """;
+            Set<String> retiredNames = Set.of("look_block", "feet_block", "inventory");
+            FunctionCatalog staleFunctions = functionCatalog(runtime, "retired_environment", source,
+                    List.of(
+                            "native_tool.call.look_block",
+                            "native_tool.call.feet_block",
+                            "native_tool.call.inventory"),
+                    emptySchema(), retiredNames);
+            ToolDefinition callFunction = callFunctionDefinition();
+            ToolCatalog currentTools = new ToolCatalog(List.of(
+                    callFunction,
+                    environmentDefinition("player_snapshot"),
+                    environmentDefinition("item_inspect"),
+                    environmentDefinition("block_inspect")), List.of());
+
+            ToolResult result = completed(dispatcher.execute(
+                    currentTools, staleFunctions, callFunction, call("retired_environment", "{}"),
+                    "call-retired-environment", turnPlayer(), MineclawConfig.defaults())
+                    .get(5, TimeUnit.SECONDS));
+
+            assertThat(result.status()).isEqualTo("ok");
+            JsonObject output = result.output().getAsJsonObject("output");
+            assertThat(output)
+                    .extracting(
+                            value -> value.get("look_status").getAsString(),
+                            value -> value.get("feet_status").getAsString(),
+                            value -> value.get("inventory_status").getAsString())
+                    .containsExactly("invalid", "invalid", "invalid");
+            assertThat(output)
+                    .extracting(
+                            value -> value.get("look_error").getAsString(),
+                            value -> value.get("feet_error").getAsString(),
+                            value -> value.get("inventory_error").getAsString())
+                    .containsOnly("native_tool_unavailable");
+            assertThat(retiredNames)
+                    .allSatisfy(name -> assertThat(ToolDefinition.Handler.fromWireName(name)).isEmpty());
+        }
+    }
+
+    @Test
     void validToolDefinitionCannotRepresentAHandlerAlias() {
         assertThatThrownBy(() -> new ToolDefinition(2, "nested",
                 callFunctionDefinition().payload(), true,
@@ -433,6 +564,40 @@ class ToolDispatcherTest {
                 commandTool, Runnable::run, runtime, operations);
     }
 
+    private ToolDispatcher offlineEnvironmentJavascriptDispatcher(JavaScriptWorkflowRuntime runtime)
+            throws IOException {
+        GlobalRegionScheduler global = handledProxy(GlobalRegionScheduler.class,
+                (ignored, method, arguments) -> {
+                    if (method.getName().equals("execute")) {
+                        ((Runnable) arguments[1]).run();
+                    }
+                    return defaultValue(method.getReturnType());
+                });
+        Server server = handledProxy(Server.class, (ignored, method, arguments) -> switch (method.getName()) {
+            case "getGlobalRegionScheduler" -> global;
+            case "getPlayer" -> null;
+            default -> defaultValue(method.getReturnType());
+        });
+        Plugin plugin = handledProxy(Plugin.class, (ignored, method, arguments) -> switch (method.getName()) {
+            case "getServer" -> server;
+            case "isEnabled" -> true;
+            default -> defaultValue(method.getReturnType());
+        });
+        EnvironmentTools environment = new EnvironmentTools(server, new FoliaTasks(plugin));
+        Logger logger = Logger.getAnonymousLogger();
+        logger.setUseParentHandlers(false);
+        AuditLogger audit = new AuditLogger(logger);
+        CommandRuntime commandRuntime = proxy(CommandRuntime.class, null);
+        InteractionManager interactions = new InteractionManager((delay, action) -> () -> { });
+        JavaScriptOperationRouter operations = new JavaScriptOperationRouter(
+                commandRuntime, interactions, new ScriptCommandDispatcher(commandRuntime, audit), audit,
+                runtime::isActive);
+        return new ToolDispatcher(new WorkspaceFileTools(workspace.resolve("workspace")), environment,
+                (arguments, player, config) -> CompletableFuture.completedFuture(
+                        ToolExecution.completed(ToolResult.simple("ok", "called"))),
+                Runnable::run, runtime, operations);
+    }
+
     private static ToolDefinition definition() {
         JsonObject schema = JsonParser.parseString("""
                 {
@@ -455,6 +620,10 @@ class ToolDispatcherTest {
                 }
                 """).getAsJsonObject();
         return nativeDefinition("read", schema);
+    }
+
+    private static ToolDefinition environmentDefinition(String handler) {
+        return nativeDefinition(handler, emptySchema());
     }
 
     private static FunctionCatalog functionCatalog(
@@ -573,6 +742,10 @@ class ToolDispatcherTest {
                 (ignored, method, arguments) -> method.getName().equals("getServer") && server != null
                         ? server : defaultValue(method.getReturnType()));
         return type.cast(value);
+    }
+
+    private static <T> T handledProxy(Class<T> type, java.lang.reflect.InvocationHandler handler) {
+        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler));
     }
 
     private static Object defaultValue(Class<?> type) {

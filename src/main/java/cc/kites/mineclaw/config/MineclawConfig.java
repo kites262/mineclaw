@@ -47,7 +47,7 @@ public record MineclawConfig(
     public static MineclawConfig defaults() {
         return new MineclawConfig(
                 SCHEMA,
-                new Context(24),
+                new Context(240),
                 new Chat("@ai", Optional.empty(), 2_000, 120),
                 new Tools(true, Set.of()),
                 new Functions(1_048_576, 256, 512, 32_768, 16, 2_048, 8),
@@ -56,9 +56,9 @@ public record MineclawConfig(
                 new RateLimit(5_000, 1_000),
                 new Workspace(true, new Workspace.MaxChars(16_000)),
                 new FileTools(12_000, 100, 4, 3_000),
-                new Turn(8, 24),
+                new Turn(80, 240),
                 new Identity("Mineclaw", true, false),
-                new Environment(12, 250, new Environment.Inventory(true, 36)),
+                new Environment(12, 10, new Environment.ItemInspect(36, 12_000)),
                 new Logging(Level.INFO));
     }
 
@@ -226,13 +226,13 @@ public record MineclawConfig(
     public record Environment(
             int lookDistance,
             long toolCooldownMillis,
-            Inventory inventory
+            ItemInspect itemInspect
     ) {
         public Environment {
-            Objects.requireNonNull(inventory, "inventory");
+            Objects.requireNonNull(itemInspect, "itemInspect");
         }
 
-        public record Inventory(boolean includeEquipment, int maxSlots) {
+        public record ItemInspect(int maxSlots, int maxOutputChars) {
         }
     }
 

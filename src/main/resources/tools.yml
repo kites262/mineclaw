@@ -1,39 +1,53 @@
 schema: 2
 tools:
-  - handler: look_block
+  - handler: player_snapshot
     enabled: true
     payload:
       type: function
       function:
-        name: look_block
-        description: 读取当前对话玩家准星指向的方块类型与坐标
+        name: player_snapshot
+        description: 读取当前对话玩家的位置、生存与移动状态、局部环境和有效状态效果；不读取其他玩家
         parameters:
           type: object
           properties: {}
           additionalProperties: false
 
-  - handler: feet_block
+  - handler: item_inspect
     enabled: true
     payload:
       type: function
       function:
-        name: feet_block
-        description: 读取当前对话玩家脚下的方块类型与坐标
+        name: item_inspect
+        description: 读取当前对话玩家的背包摘要或指定槽位物品详情；不返回原始 NBT、PDC、书本正文或容器内容
         parameters:
           type: object
-          properties: {}
+          properties:
+            mode:
+              type: string
+              enum: [inventory, slot, main_hand, off_hand, helmet, chestplate, leggings, boots]
+            slot:
+              type: integer
+              minimum: 0
+              maximum: 35
           additionalProperties: false
 
-  - handler: inventory
+  - handler: block_inspect
     enabled: true
     payload:
       type: function
       function:
-        name: inventory
-        description: 读取当前对话玩家的脱敏背包摘要
+        name: block_inspect
+        description: 读取当前对话玩家准星指向或脚下方块的类型、坐标、公开 BlockData 属性与局部环境；不返回方块实体私有内容
         parameters:
           type: object
-          properties: {}
+          properties:
+            mode:
+              type: string
+              enum: [look, feet]
+            distance:
+              type: integer
+              minimum: 1
+              maximum: 128
           additionalProperties: false
 
   - handler: online_players

@@ -173,14 +173,19 @@ public final class ConfigLoader {
                         defaults.identity().includePlayerContentPrefix()));
 
         MineclawConfig.Environment environmentDefaults = defaults.environment();
+        int itemMaxOutputChars = boundedPositiveInt(yaml, "environment.item_inspect.max_output_chars",
+                environmentDefaults.itemInspect().maxOutputChars(), 65_536);
+        if (itemMaxOutputChars < 1_024) {
+            throw invalid("environment.item_inspect.max_output_chars", "must be at least 1024");
+        }
         MineclawConfig.Environment environment = new MineclawConfig.Environment(
-                positiveInt(yaml, "environment.look_distance", environmentDefaults.lookDistance()),
+                boundedPositiveInt(yaml, "environment.look_distance",
+                        environmentDefaults.lookDistance(), 128),
                 nonNegativeLong(yaml, "environment.tool_cooldown_ms", environmentDefaults.toolCooldownMillis()),
-                new MineclawConfig.Environment.Inventory(
-                        bool(yaml, "environment.inventory.include_equipment",
-                                environmentDefaults.inventory().includeEquipment()),
-                        positiveInt(yaml, "environment.inventory.max_slots",
-                                environmentDefaults.inventory().maxSlots())));
+                new MineclawConfig.Environment.ItemInspect(
+                        boundedPositiveInt(yaml, "environment.item_inspect.max_slots",
+                                environmentDefaults.itemInspect().maxSlots(), 36),
+                        itemMaxOutputChars));
 
         String rawLevel = nonBlank(string(yaml, "logging.level", defaults.logging().configuredName()),
                 "logging.level");
@@ -198,7 +203,7 @@ public final class ConfigLoader {
     private static void validateSectionShapes(ConfigurationSection yaml) throws ConfigException {
         for (String path : List.of("context", "chat", "tools", "functions", "javascript", "rate_limit",
                 "workspace", "workspace.max_chars", "file_tools", "turn", "identity", "environment",
-                "environment.inventory", "logging")) {
+                "environment.item_inspect", "logging")) {
             Object value = yaml.get(path);
             if (value != null && !(value instanceof ConfigurationSection)) {
                 throw invalid(path, "must be a mapping");
@@ -227,8 +232,8 @@ public final class ConfigLoader {
         exactFields(yaml, "turn", Set.of("max_tool_rounds", "max_tool_calls"));
         exactFields(yaml, "identity", Set.of("name", "include_player_name_field",
                 "include_player_content_prefix"));
-        exactFields(yaml, "environment", Set.of("look_distance", "tool_cooldown_ms", "inventory"));
-        exactFields(yaml, "environment.inventory", Set.of("include_equipment", "max_slots"));
+        exactFields(yaml, "environment", Set.of("look_distance", "tool_cooldown_ms", "item_inspect"));
+        exactFields(yaml, "environment.item_inspect", Set.of("max_slots", "max_output_chars"));
         exactFields(yaml, "logging", Set.of("level"));
     }
 

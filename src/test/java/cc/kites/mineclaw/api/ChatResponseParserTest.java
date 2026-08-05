@@ -17,11 +17,11 @@ class ChatResponseParserTest {
                 + "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"你\"}}]}\r\n\r\n"
                 + "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"好\"}}]}\n\n"
                 + "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":["
-                + "{\"index\":1,\"id\":\"call_b\",\"function\":{\"name\":\"inven\",\"arguments\":\"{\"}},"
-                + "{\"index\":0,\"id\":\"call_a\",\"function\":{\"name\":\"look_\",\"arguments\":\"{\\\"dis\"}}]}}]}\n\n"
+                + "{\"index\":1,\"id\":\"call_b\",\"function\":{\"name\":\"item_\",\"arguments\":\"{\"}},"
+                + "{\"index\":0,\"id\":\"call_a\",\"function\":{\"name\":\"block_\",\"arguments\":\"{\\\"dis\"}}]}}]}\n\n"
                 + "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":["
-                + "{\"index\":0,\"function\":{\"name\":\"block\",\"arguments\":\"tance\\\":8}\"}},"
-                + "{\"index\":1,\"function\":{\"name\":\"tory\",\"arguments\":\"}\"}}]},"
+                + "{\"index\":0,\"function\":{\"name\":\"inspect\",\"arguments\":\"tance\\\":8}\"}},"
+                + "{\"index\":1,\"function\":{\"name\":\"inspect\",\"arguments\":\"}\"}}]},"
                 + "\"finish_reason\":\"tool_calls\"}]}\n\n"
                 + "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":4,\"total_tokens\":14}}\n\n"
                 + "data: [DONE]\n\n";
@@ -36,8 +36,8 @@ class ChatResponseParserTest {
         assertThat(result.content()).isEqualTo("你好");
         assertThat(result.finishReason()).isEqualTo("tool_calls");
         assertThat(result.toolCalls()).containsExactly(
-                new ToolCall("call_a", "look_block", "{\"distance\":8}"),
-                new ToolCall("call_b", "inventory", "{}"));
+                new ToolCall("call_a", "block_inspect", "{\"distance\":8}"),
+                new ToolCall("call_b", "item_inspect", "{}"));
         assertThat(result.usage()).isEqualTo(new ApiUsage(10, 4, 14));
     }
 
@@ -52,7 +52,7 @@ class ChatResponseParserTest {
                       "tool_calls": [{
                         "id": "call_1",
                         "type": "function",
-                        "function": {"name": "feet_block", "arguments": "{}"}
+                        "function": {"name": "block_inspect", "arguments": "{\\\"mode\\\":\\\"feet\\\"}"}
                       }]
                     },
                     "finish_reason": "tool_calls"
@@ -63,7 +63,7 @@ class ChatResponseParserTest {
 
         ChatCompletionResult result = parser.finish();
         assertThat(result.content()).isEmpty();
-        assertThat(result.toolCalls()).containsExactly(new ToolCall("call_1", "feet_block", "{}"));
+        assertThat(result.toolCalls()).containsExactly(new ToolCall("call_1", "block_inspect", "{\"mode\":\"feet\"}"));
         assertThat(result.finishReason()).isEqualTo("tool_calls");
         assertThat(result.usage()).isEqualTo(new ApiUsage(null, null, 22));
     }

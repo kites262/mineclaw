@@ -115,9 +115,9 @@ public record ToolDefinition(
     }
 
     public enum Handler {
-        LOOK_BLOCK("look_block"),
-        FEET_BLOCK("feet_block"),
-        INVENTORY("inventory"),
+        PLAYER_SNAPSHOT("player_snapshot"),
+        ITEM_INSPECT("item_inspect"),
+        BLOCK_INSPECT("block_inspect"),
         ONLINE_PLAYERS("online_players"),
         LIST("list"),
         READ("read"),
