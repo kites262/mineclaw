@@ -44,6 +44,8 @@ turn:
   max_tool_calls: 24
 identity:
   name: 'Mineclaw'
+  include_player_name_field: true
+  include_player_content_prefix: false
 environment:
   look_distance: 12
   tool_cooldown_ms: 250

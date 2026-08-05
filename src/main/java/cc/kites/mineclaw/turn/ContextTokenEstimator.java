@@ -18,8 +18,20 @@ final class ContextTokenEstimator {
 
     Estimate estimate(String modelReference, String system, List<ApiMessage> messages,
                       List<JsonObject> tools) {
+        return estimate(modelReference, system, messages, tools, true);
+    }
+
+    Estimate estimate(String modelReference, String system, List<ApiMessage> messages,
+                      List<JsonObject> tools, boolean includeMessageNames) {
+        return estimate(modelReference, system, messages, tools, includeMessageNames, true);
+    }
+
+    Estimate estimate(String modelReference, String system, List<ApiMessage> messages,
+                      List<JsonObject> tools, boolean includeMessageNames,
+                      boolean includePlayerContentPrefix) {
         Objects.requireNonNull(modelReference, "modelReference");
-        int raw = rawEstimate(system, messages, tools);
+        int raw = rawEstimate(system, messages, tools, includeMessageNames,
+                includePlayerContentPrefix);
         double factor = factors.getOrDefault(modelReference, 1.0d);
         return new Estimate(raw, saturatedCeil(raw * factor), factors.containsKey(modelReference));
     }
@@ -35,7 +47,19 @@ final class ContextTokenEstimator {
     }
 
     int estimateMessages(String modelReference, List<ApiMessage> messages) {
-        return estimateRaw(modelReference, Math.max(1, messageEstimate(messages))).tokens();
+        return estimateMessages(modelReference, messages, true);
+    }
+
+    int estimateMessages(String modelReference, List<ApiMessage> messages,
+                         boolean includeMessageNames) {
+        return estimateMessages(modelReference, messages, includeMessageNames, true);
+    }
+
+    int estimateMessages(String modelReference, List<ApiMessage> messages,
+                         boolean includeMessageNames, boolean includePlayerContentPrefix) {
+        return estimateRaw(modelReference,
+                Math.max(1, messageEstimate(messages, includeMessageNames,
+                        includePlayerContentPrefix))).tokens();
     }
 
     void observe(String modelReference, int rawEstimate, ApiUsage usage) {
@@ -52,9 +76,23 @@ final class ContextTokenEstimator {
     }
 
     static int rawEstimate(String system, List<ApiMessage> messages, List<JsonObject> tools) {
+        return rawEstimate(system, messages, tools, true);
+    }
+
+    static int rawEstimate(String system, List<ApiMessage> messages, List<JsonObject> tools,
+                           boolean includeMessageNames) {
+        return rawEstimate(system, messages, tools, includeMessageNames, true);
+    }
+
+    static int rawEstimate(String system, List<ApiMessage> messages, List<JsonObject> tools,
+                           boolean includeMessageNames, boolean includePlayerContentPrefix) {
         long tokens = 8L + textTokens(system);
         for (ApiMessage message : Objects.requireNonNull(messages, "messages")) {
-            tokens += 4L + textTokens(message.role()) + textTokens(message.content());
+            tokens += 4L + textTokens(message.role())
+                    + textTokens(message.modelContent(includePlayerContentPrefix));
+            if (includeMessageNames) {
+                tokens += textTokens(message.name());
+            }
             for (ToolCall call : message.toolCalls()) {
                 tokens += 8L + textTokens(call.id()) + textTokens(call.name())
                         + textTokens(call.arguments());
@@ -71,7 +109,17 @@ final class ContextTokenEstimator {
     }
 
     static int messageEstimate(List<ApiMessage> messages) {
-        return rawEstimate("", messages, List.of()) - 8;
+        return messageEstimate(messages, true);
+    }
+
+    static int messageEstimate(List<ApiMessage> messages, boolean includeMessageNames) {
+        return messageEstimate(messages, includeMessageNames, true);
+    }
+
+    static int messageEstimate(List<ApiMessage> messages, boolean includeMessageNames,
+                               boolean includePlayerContentPrefix) {
+        return rawEstimate("", messages, List.of(), includeMessageNames,
+                includePlayerContentPrefix) - 8;
     }
 
     private static long textTokens(String value) {

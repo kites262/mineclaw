@@ -57,7 +57,7 @@ public record MineclawConfig(
                 new Workspace(true, new Workspace.MaxChars(16_000)),
                 new FileTools(12_000, 100, 4, 3_000),
                 new Turn(8, 24),
-                new Identity("Mineclaw"),
+                new Identity("Mineclaw", true, false),
                 new Environment(12, 250, new Environment.Inventory(true, 36)),
                 new Logging(Level.INFO));
     }
@@ -216,7 +216,8 @@ public record MineclawConfig(
     public record Turn(int maxToolRounds, int maxToolCalls) {
     }
 
-    public record Identity(String name) {
+    public record Identity(String name, boolean includePlayerNameField,
+                           boolean includePlayerContentPrefix) {
         public Identity {
             name = Objects.requireNonNull(name, "name").trim();
         }

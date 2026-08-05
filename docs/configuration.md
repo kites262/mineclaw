@@ -63,6 +63,8 @@
 | `turn.max_tool_rounds` | `8` | 单 Turn Tool 往返上限 |
 | `turn.max_tool_calls` | `24` | 单 Turn Tool 调用总数上限 |
 | `identity.name` | `Mineclaw` | 公屏展示名，不是玩家账号 |
+| `identity.include_player_name_field` | `true` | 是否在玩家消息中发送标准 `name` 字段 |
+| `identity.include_player_content_prefix` | `false` | 是否在玩家消息正文前发送 `<player>...</player>` 身份标记 |
 | `environment.look_distance` | `12` | 准星方块最大观察距离 |
 | `environment.tool_cooldown_ms` | `250` | 环境 Tool 冷却 |
 | `environment.inventory.include_equipment` | `true` | 背包摘要是否含装备 |

@@ -184,7 +184,10 @@ public final class ChatCompletionsClient {
         system.addProperty("role", "system");
         system.addProperty("content", request.systemPrompt());
         messages.add(system);
-        request.messages().stream().map(ChatCompletionsClient::messageJson).forEach(messages::add);
+        request.messages().stream()
+                .map(message -> messageJson(message, request.includeMessageNames(),
+                        request.includePlayerContentPrefix()))
+                .forEach(messages::add);
         root.add("messages", messages);
 
         if (!request.tools().isEmpty()) {
@@ -227,13 +230,14 @@ public final class ChatCompletionsClient {
         return value.substring(0, end) + "...";
     }
 
-    private static JsonObject messageJson(ApiMessage message) {
+    private static JsonObject messageJson(ApiMessage message, boolean includeName,
+                                          boolean includePlayerPrefix) {
         JsonObject result = new JsonObject();
         result.addProperty("role", message.role());
-        if (message.content() == null) {
+        if (message.modelContent(includePlayerPrefix) == null) {
             result.add("content", JsonNull.INSTANCE);
         } else {
-            result.addProperty("content", message.content());
+            result.addProperty("content", message.modelContent(includePlayerPrefix));
         }
         if (!message.toolCalls().isEmpty()) {
             JsonArray calls = new JsonArray();
@@ -244,6 +248,9 @@ public final class ChatCompletionsClient {
             result.addProperty("tool_call_id", message.toolCallId());
         }
         message.providerFields().forEach(result::addProperty);
+        if (includeName && message.name() != null) {
+            result.addProperty("name", message.name());
+        }
         return result;
     }
 

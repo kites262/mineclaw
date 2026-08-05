@@ -166,7 +166,11 @@ public final class ConfigLoader {
                 positiveInt(yaml, "turn.max_tool_calls", turnDefaults.maxToolCalls()));
 
         MineclawConfig.Identity identity = new MineclawConfig.Identity(
-                string(yaml, "identity.name", defaults.identity().name()));
+                string(yaml, "identity.name", defaults.identity().name()),
+                bool(yaml, "identity.include_player_name_field",
+                        defaults.identity().includePlayerNameField()),
+                bool(yaml, "identity.include_player_content_prefix",
+                        defaults.identity().includePlayerContentPrefix()));
 
         MineclawConfig.Environment environmentDefaults = defaults.environment();
         MineclawConfig.Environment environment = new MineclawConfig.Environment(
@@ -221,7 +225,8 @@ public final class ConfigLoader {
         exactFields(yaml, "workspace.max_chars", Set.of("agents"));
         exactFields(yaml, "file_tools", Set.of("max_read_chars", "max_results", "max_depth", "timeout"));
         exactFields(yaml, "turn", Set.of("max_tool_rounds", "max_tool_calls"));
-        exactFields(yaml, "identity", Set.of("name"));
+        exactFields(yaml, "identity", Set.of("name", "include_player_name_field",
+                "include_player_content_prefix"));
         exactFields(yaml, "environment", Set.of("look_distance", "tool_cooldown_ms", "inventory"));
         exactFields(yaml, "environment.inventory", Set.of("include_equipment", "max_slots"));
         exactFields(yaml, "logging", Set.of("level"));

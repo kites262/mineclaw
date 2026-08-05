@@ -21,6 +21,42 @@ class ConfigLoaderTest {
         assertThat(config.chat().publicPrefix()).isEqualTo("@ai");
         assertThat(config.tools().enabled()).isTrue();
         assertThat(config.identity().name()).isEqualTo("Mineclaw");
+        assertThat(config.identity().includePlayerNameField()).isTrue();
+        assertThat(config.identity().includePlayerContentPrefix()).isFalse();
+    }
+
+    @Test
+    void playerNameFieldDefaultsOnAndCanBeDisabled() throws Exception {
+        assertThat(loader.parse("schema: 1\n").identity().includePlayerNameField()).isTrue();
+        assertThat(loader.parse("""
+                schema: 1
+                identity:
+                  include_player_name_field: false
+                """).identity().includePlayerNameField()).isFalse();
+        assertThatThrownBy(() -> loader.parse("""
+                schema: 1
+                identity:
+                  include_player_name_field: disabled
+                """))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("identity.include_player_name_field must be a boolean");
+    }
+
+    @Test
+    void playerContentPrefixDefaultsOffAndCanBeEnabled() throws Exception {
+        assertThat(loader.parse("schema: 1\n").identity().includePlayerContentPrefix()).isFalse();
+        assertThat(loader.parse("""
+                schema: 1
+                identity:
+                  include_player_content_prefix: true
+                """).identity().includePlayerContentPrefix()).isTrue();
+        assertThatThrownBy(() -> loader.parse("""
+                schema: 1
+                identity:
+                  include_player_content_prefix: disabled
+                """))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("identity.include_player_content_prefix must be a boolean");
     }
 
     @Test

@@ -47,8 +47,9 @@ public final class PublicSession {
     }
 
     /** Stores a successful Turn compactly as the public user request and final assistant answer. */
-    public synchronized void appendCompletedTurn(String user, String assistant, int maxMessages) {
-        appendTurn(List.of(ApiMessage.user(user), ApiMessage.assistant(assistant)), maxMessages);
+    public synchronized void appendCompletedTurn(String playerName, String user, String assistant,
+                                                 int maxMessages) {
+        appendTurn(List.of(ApiMessage.user(playerName, user), ApiMessage.assistant(assistant)), maxMessages);
     }
 
     /**

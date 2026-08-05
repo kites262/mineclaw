@@ -26,7 +26,9 @@ public record ChatCompletionRequest(
         JsonObject extraBody,
         Optional<String> interleavedField,
         Optional<String> promptCacheKey,
-        boolean requestDiagnostics
+        boolean requestDiagnostics,
+        boolean includeMessageNames,
+        boolean includePlayerContentPrefix
 ) {
     public ChatCompletionRequest {
         Objects.requireNonNull(endpoint, "endpoint");
@@ -79,10 +81,33 @@ public record ChatCompletionRequest(
                                  List<JsonObject> tools, Duration timeout, int maxRetries,
                                  Duration retryBackoff, int maxOutputTokens,
                                  JsonObject extraBody, Optional<String> interleavedField,
+                                 Optional<String> promptCacheKey, boolean requestDiagnostics,
+                                 boolean includeMessageNames) {
+        this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
+                maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
+                promptCacheKey, requestDiagnostics, includeMessageNames, true);
+    }
+
+    public ChatCompletionRequest(URI endpoint, String modelReference, String model,
+                                 String systemPrompt, List<ApiMessage> messages,
+                                 List<JsonObject> tools, Duration timeout, int maxRetries,
+                                 Duration retryBackoff, int maxOutputTokens,
+                                 JsonObject extraBody, Optional<String> interleavedField,
+                                 Optional<String> promptCacheKey, boolean requestDiagnostics) {
+        this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
+                maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
+                promptCacheKey, requestDiagnostics, true, true);
+    }
+
+    public ChatCompletionRequest(URI endpoint, String modelReference, String model,
+                                 String systemPrompt, List<ApiMessage> messages,
+                                 List<JsonObject> tools, Duration timeout, int maxRetries,
+                                 Duration retryBackoff, int maxOutputTokens,
+                                 JsonObject extraBody, Optional<String> interleavedField,
                                  Optional<String> promptCacheKey) {
         this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
                 maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
-                promptCacheKey, false);
+                promptCacheKey, false, true, true);
     }
 
     public ChatCompletionRequest(URI endpoint, String modelReference, String model,
@@ -92,14 +117,14 @@ public record ChatCompletionRequest(
                                  JsonObject extraBody, Optional<String> interleavedField) {
         this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
                 maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
-                Optional.empty(), false);
+                Optional.empty(), false, true, true);
     }
 
     public ChatCompletionRequest(URI endpoint, String model, String systemPrompt,
                                  List<ApiMessage> messages, List<JsonObject> tools,
                                  Duration timeout, int maxRetries, Duration retryBackoff) {
         this(endpoint, model, model, systemPrompt, messages, tools, timeout, maxRetries, retryBackoff,
-                0, new JsonObject(), Optional.empty(), Optional.empty(), false);
+                0, new JsonObject(), Optional.empty(), Optional.empty(), false, true, true);
     }
 
     @Override

@@ -78,7 +78,7 @@ class ChatCompletionsClientTest {
                  "parameters":{"type":"object","properties":{}}}}
                 """).getAsJsonObject();
         ChatCompletionRequest request = request(List.of(
-                ApiMessage.user("看哪里"),
+                ApiMessage.user("Alice", "看哪里"),
                 ApiMessage.assistantToolCalls(List.of(new ToolCall("old_call", "look", "{}"))),
                 ApiMessage.tool("old_call", "{\"status\":\"ok\"}")), List.of(tool), 0);
 
@@ -99,8 +99,53 @@ class ChatCompletionsClientTest {
         assertThat(messages).hasSize(4);
         assertThat(messages.get(0).getAsJsonObject().get("role").getAsString()).isEqualTo("system");
         assertThat(messages.get(0).getAsJsonObject().get("content").getAsString()).isEqualTo("system rules");
+        assertThat(messages.get(1).getAsJsonObject().get("name").getAsString()).isEqualTo("Alice");
+        assertThat(messages.get(1).getAsJsonObject().get("content").getAsString())
+                .isEqualTo("<player>Alice</player>\n看哪里");
         assertThat(messages.get(2).getAsJsonObject().getAsJsonArray("tool_calls")).hasSize(1);
         assertThat(messages.get(3).getAsJsonObject().get("tool_call_id").getAsString()).isEqualTo("old_call");
+    }
+
+    @Test
+    void canOmitPlayerNameFieldWithoutRemovingContentMarker() {
+        AtomicReference<JsonObject> requestBody = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(JsonParser.parseString(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
+            respond(exchange, 200, ordinaryResponse("ok"));
+        });
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                endpoint(), "test/model", "upstream-model", "system",
+                List.of(ApiMessage.user("Alice", "hello")), List.of(), Duration.ofSeconds(2),
+                0, Duration.ZERO, 0, new JsonObject(), Optional.empty(), Optional.empty(),
+                false, false);
+
+        client().complete(request, "secret", IGNORE_STREAM).join();
+
+        JsonObject user = requestBody.get().getAsJsonArray("messages").get(1).getAsJsonObject();
+        assertThat(user.has("name")).isFalse();
+        assertThat(user.get("content").getAsString()).isEqualTo("<player>Alice</player>\nhello");
+    }
+
+    @Test
+    void canOmitPlayerContentMarkerWithoutRemovingNameField() {
+        AtomicReference<JsonObject> requestBody = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(JsonParser.parseString(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
+            respond(exchange, 200, ordinaryResponse("ok"));
+        });
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                endpoint(), "test/model", "upstream-model", "system",
+                List.of(ApiMessage.user("Alice", "hello")), List.of(), Duration.ofSeconds(2),
+                0, Duration.ZERO, 0, new JsonObject(), Optional.empty(), Optional.empty(),
+                false, true, false);
+
+        client().complete(request, "secret", IGNORE_STREAM).join();
+
+        JsonObject user = requestBody.get().getAsJsonArray("messages").get(1).getAsJsonObject();
+        assertThat(user.get("name").getAsString()).isEqualTo("Alice");
+        assertThat(user.get("content").getAsString()).isEqualTo("hello");
     }
 
     @Test
