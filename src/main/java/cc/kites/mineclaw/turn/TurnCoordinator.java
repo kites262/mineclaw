@@ -47,6 +47,7 @@ import java.util.logging.Logger;
 
 /** Owns the one server-wide active turn and its asynchronous tool loop. */
 public final class TurnCoordinator {
+    static final int MAX_RESPONSE_ATTEMPTS = 3;
     private static final String HARNESS_SHELL = """
             You operate in public Minecraft chat through Mineclaw. Keep replies concise and suitable for one chat
             message. Use only **bold** and MiniMessage color tags; no other Markdown, tags, tables, or hidden protocol.
@@ -253,7 +254,8 @@ public final class TurnCoordinator {
             }
             turn.displayName = snapshot.agent.displayName();
             return prepareRound(turn, snapshot, false, "threshold")
-                    .thenCompose(prepared -> responseWithSingleOverflowRecovery(turn, snapshot, prepared))
+                    .thenCompose(prepared -> responseWithSingleOverflowRecovery(
+                            turn, snapshot, prepared, toolRounds))
                     .thenCompose(response -> handleResponse(
                             turn, snapshot.tools, snapshot.functions, response.result(),
                             toolRounds, toolCalls));
@@ -261,54 +263,52 @@ public final class TurnCoordinator {
     }
 
     private CompletableFuture<ModelResponse> responseWithSingleOverflowRecovery(
-            ActiveTurn turn, RoundSnapshot snapshot, PreparedRound prepared) {
-        return sendModelRequest(turn, prepared).exceptionallyCompose(failure -> {
+            ActiveTurn turn, RoundSnapshot snapshot, PreparedRound prepared, int toolRound) {
+        return sendModelRequest(turn, prepared, toolRound).exceptionallyCompose(failure -> {
             Throwable cause = unwrap(failure);
             if (!isCurrent(turn) || !isContextOverflow(cause)) {
                 return CompletableFuture.failedFuture(cause);
             }
-            turn.actionBar.replaceOnNextContent();
+            if (TurnActionBarPolicy.streamDeltas(toolRound)) {
+                turn.actionBar.replaceOnNextContent();
+            }
             return prepareRound(turn, snapshot, true, "provider_overflow")
                     .thenCompose(recovered -> {
                         if (!recovered.compacted()) {
                             return CompletableFuture.failedFuture(new ContextCapacityException(
                                     "Provider rejected the context and no history could be compacted"));
                         }
-                        return sendModelRequest(turn, recovered).exceptionallyCompose(retryFailure -> {
-                            Throwable retryCause = unwrap(retryFailure);
-                            if (isContextOverflow(retryCause)) {
-                                return CompletableFuture.failedFuture(new ContextCapacityException(
-                                        "Provider rejected the context after one compaction recovery"));
-                            }
-                            return CompletableFuture.failedFuture(retryCause);
-                        });
+                        return sendModelRequest(turn, recovered, toolRound)
+                                .exceptionallyCompose(retryFailure -> {
+                                    Throwable retryCause = unwrap(retryFailure);
+                                    if (isContextOverflow(retryCause)) {
+                                        return CompletableFuture.failedFuture(new ContextCapacityException(
+                                                "Provider rejected the context after one compaction recovery"));
+                                    }
+                                    return CompletableFuture.failedFuture(retryCause);
+                                });
                     });
         });
     }
 
-    private CompletableFuture<ModelResponse> sendModelRequest(ActiveTurn turn, PreparedRound prepared) {
-        StringBuilder streamed = new StringBuilder();
+    private CompletableFuture<ModelResponse> sendModelRequest(
+            ActiveTurn turn, PreparedRound prepared, int toolRound) {
+        boolean streamActionBar = TurnActionBarPolicy.streamDeltas(toolRound);
         CompletableFuture<ChatCompletionResult> response;
         try {
             response = chatClient.complete(prepared.request(), turn.provider.api().apiKey(),
                     new ChatCompletionsClient.StreamObserver() {
                 @Override
                 public void onDelta(String delta) {
-                    synchronized (streamed) {
-                        streamed.append(delta);
-                        if (isCurrent(turn)) {
-                            turn.actionBar.append(delta);
-                        }
+                    if (streamActionBar && isCurrent(turn)) {
+                        turn.actionBar.append(delta);
                     }
                 }
 
                 @Override
                 public void onReset() {
-                    synchronized (streamed) {
-                        streamed.setLength(0);
-                        if (isCurrent(turn)) {
-                            turn.actionBar.replaceOnNextContent();
-                        }
+                    if (streamActionBar && isCurrent(turn)) {
+                        turn.actionBar.replaceOnNextContent();
                     }
                 }
 
@@ -347,8 +347,13 @@ public final class TurnCoordinator {
                 terminateWithMessage(turn, "tool_loop_limit");
                 return CompletableFuture.completedFuture(null);
             }
-            // Preserve the current frame while tools and the next completion round are pending.
-            turn.actionBar.replaceOnNextContent();
+            switch (TurnActionBarPolicy.completion(toolRounds, decision)) {
+                case HOLD -> turn.actionBar.hold();
+                case REPLACE -> turn.actionBar.replaceComplete(result.content());
+                case IGNORE -> { }
+            }
+            turn.actionBar.replaceActivity(messages.render("actionbar_tools_called", Map.of(
+                    "tools", actionBarToolNames(catalog, result.toolCalls()))));
             Map<String, String> providerFields = turn.model.interleavedField()
                     .map(field -> Map.of(field, result.interleavedValue())).orElse(Map.of());
             turn.context.add(new ApiMessage("assistant",
@@ -358,7 +363,7 @@ public final class TurnCoordinator {
                     .thenCompose(ignored -> runRound(turn, toolRounds + 1, nextCalls));
         }
         if (decision == TurnProtocol.Decision.FINAL_MESSAGE) {
-            finishSuccess(turn, result.content());
+            finishSuccess(turn, result);
         } else {
             return CompletableFuture.failedFuture(new IllegalStateException(
                     "completion ended with unsupported finish_reason: " + result.finishReason()));
@@ -416,6 +421,19 @@ public final class TurnCoordinator {
                 return executeCallsSequentially(turn, catalog, functions, calls, index + 1);
             }).whenComplete((ignored, failure) -> turn.toolExecution.compareAndSet(execution, null));
         });
+    }
+
+    private static String actionBarToolNames(ToolCatalog catalog, List<ToolCall> calls) {
+        return calls.stream()
+                .map(call -> actionBarToolName(call, catalog.findEnabled(call.name())))
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    private static String actionBarToolName(ToolCall call, Optional<ToolDefinition> definition) {
+        if (definition.isPresent()) {
+            return definition.orElseThrow().handler();
+        }
+        return call.name().equals("call_function") ? "call_function" : "unknown_tool";
     }
 
     private CompletableFuture<RoundSnapshot> loadRound(ActiveTurn turn) {
@@ -601,7 +619,8 @@ public final class TurnCoordinator {
         ChatCompletionRequest request = new ChatCompletionRequest(
                 turn.provider.api().endpoint(), turn.model.reference(),
                 turn.model.upstreamModelId(), system, turn.context, definitions,
-                turn.provider.transport().timeout(), turn.provider.transport().maxRetries(),
+                turn.provider.transport().timeout(), responseRetries(
+                        turn.provider.transport().maxRetries()),
                 turn.provider.transport().backoff(), turn.model.limits().maxOutputTokens(),
                 turn.model.extraBody(), turn.model.interleavedField(), turn.promptCacheKey,
                 turn.config.logging().requestDiagnosticsEnabled(),
@@ -920,30 +939,31 @@ public final class TurnCoordinator {
         }
     }
 
-    private synchronized void finishSuccess(ActiveTurn turn, String rawReply) {
+    private synchronized void finishSuccess(ActiveTurn turn, ChatCompletionResult result) {
         if (!isCurrent(turn)) {
             return;
         }
+        String rawReply = result.content();
         if (rawReply == null || rawReply.isBlank()) {
             fail(turn, "api_failure", new IllegalStateException("empty assistant response"));
             return;
         }
-        String reply = PlayerChannel.truncate(rawReply, turn.config.chat().replyMaxChars());
+        String publicReply = PlayerChannel.truncate(rawReply, turn.config.chat().replyMaxChars());
         if (turn.sessionEpoch == sessionEpoch.get()) {
-            session.appendCompletedTurn(turn.playerName, turn.question, reply,
-                    turn.config.context().maxMessages());
+            ArrayList<ApiMessage> completedTurn = new ArrayList<>(currentTurnMessages(turn));
+            Map<String, String> providerFields = turn.model.interleavedField()
+                    .map(field -> Map.of(field, result.interleavedValue())).orElse(Map.of());
+            completedTurn.add(new ApiMessage("assistant", rawReply, List.of(), null, providerFields));
+            session.appendCompletedTurn(completedTurn, turn.config.context().maxMessages());
         }
         if (complete(turn, false)) {
-            channel.broadcast(messages.renderReply(turn.displayName, reply));
+            channel.broadcast(messages.renderReply(turn.displayName, publicReply));
             startQueuedManualCompaction();
         }
     }
 
     private synchronized void terminateWithMessage(ActiveTurn turn, String messageKey) {
         if (complete(turn, true)) {
-            retainFailedTurn(turn, "[Mineclaw Turn outcome: no final answer was produced because the "
-                    + "configured Tool loop limit was reached. The preceding user request remains unresolved. "
-                    + "Do not repeat side effects unless their retained Tool results show they did not occur.]");
             channel.send(turn.player, messages.render(messageKey));
             startQueuedManualCompaction();
         }
@@ -951,12 +971,6 @@ public final class TurnCoordinator {
 
     private synchronized void fail(ActiveTurn turn, String messageKey, Throwable failure) {
         if (complete(turn, true)) {
-            String reason = isTimeout(failure)
-                    ? "the Provider request timed out"
-                    : "the Turn failed before a final response was available";
-            retainFailedTurn(turn, "[Mineclaw Turn outcome: no final answer was produced because "
-                    + reason + ". The preceding user request remains unresolved. Do not repeat side effects "
-                    + "unless their retained Tool results show they did not occur.]");
             if (!(failure instanceof ChatCompletionException)) {
                 logger.warning("Mineclaw turn " + turn.id + " ended without a public reply: "
                         + failure.getClass().getSimpleName());
@@ -966,24 +980,8 @@ public final class TurnCoordinator {
         }
     }
 
-    private void retainFailedTurn(ActiveTurn turn, String outcome) {
-        if (turn.sessionEpoch != sessionEpoch.get()) {
-            return;
-        }
-        List<ApiMessage> partialTurn = List.copyOf(
-                turn.context.subList(Math.min(turn.historyMessages, turn.context.size()), turn.context.size()));
-        session.appendFailedTurn(partialTurn, outcome, turn.config.context().maxMessages());
-    }
-
-    private static boolean isTimeout(Throwable failure) {
-        Throwable current = failure;
-        for (int depth = 0; current != null && depth < 8; depth++, current = current.getCause()) {
-            if (current instanceof java.util.concurrent.TimeoutException
-                    || current instanceof java.net.http.HttpTimeoutException) {
-                return true;
-            }
-        }
-        return false;
+    static int responseRetries(int configuredRetries) {
+        return Math.min(configuredRetries, MAX_RESPONSE_ATTEMPTS - 1);
     }
 
     private void logProviderAttempt(ActiveTurn turn, int attempt, Throwable failure, boolean willRetry) {

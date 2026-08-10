@@ -320,6 +320,74 @@ class ThrottledActionBarTest {
     }
 
     @Test
+    void holdFlushesTheLastStreamingDeltaAndKeepsTheFrameAlive() {
+        Harness harness = new Harness(120);
+
+        harness.bar.append("first");
+        harness.flushOne();
+        harness.bar.append(" response");
+        harness.bar.hold();
+
+        assertThat(harness.plainMessages()).containsExactly("first", "first response");
+        harness.keepAlive();
+        assertThat(harness.plainMessages()).containsExactly("first", "first response", "first response");
+        assertThat(harness.clears).isZero();
+    }
+
+    @Test
+    void completeIntermediateResponseReplacesThePreviousFrameExactlyOnce() {
+        Harness harness = new Harness(120);
+
+        harness.bar.append("first response");
+        harness.flushOne();
+        harness.bar.replaceComplete("discarded paragraph\n\n**second response**");
+
+        assertThat(harness.plainMessages()).containsExactly("first response", "second response");
+        assertThat(harness.shown.getLast().children()).singleElement().satisfies(child ->
+                assertThat(child.decoration(TextDecoration.BOLD)).isEqualTo(TextDecoration.State.TRUE));
+        assertThat(harness.scheduled(75L)).isZero();
+        assertThat(harness.clears).isZero();
+    }
+
+    @Test
+    void emptyCompletedIntermediateResponsePreservesThePreviousFrame() {
+        Harness harness = new Harness(120);
+
+        harness.bar.append("first response");
+        harness.flushOne();
+        harness.bar.replaceComplete("");
+
+        assertThat(harness.plainMessages()).containsExactly("first response");
+    }
+
+    @Test
+    void trustedActivityAtomicallyReplacesModelTextAndStaysAlive() {
+        Harness harness = new Harness(120);
+
+        harness.bar.append("model text");
+        harness.flushOne();
+        harness.bar.replaceActivity(Component.text("⚙ 正在调用 player_snapshot"));
+
+        assertThat(harness.plainMessages()).containsExactly(
+                "model text", "⚙ 正在调用 player_snapshot");
+        harness.keepAlive();
+        assertThat(harness.plainMessages()).containsExactly(
+                "model text", "⚙ 正在调用 player_snapshot", "⚙ 正在调用 player_snapshot");
+        assertThat(harness.clears).isZero();
+    }
+
+    @Test
+    void activityIsReplacedByTheNextCompletedIntermediateResponse() {
+        Harness harness = new Harness(120);
+
+        harness.bar.replaceActivity(Component.text("✓ player_snapshot 完成"));
+        harness.bar.replaceComplete("next response");
+
+        assertThat(harness.plainMessages()).containsExactly(
+                "✓ player_snapshot 完成", "next response");
+    }
+
+    @Test
     void thinkingPlaceholderSurvivesFormattingAndIsAtomicallyReplacedByFirstVisibleText() {
         Harness harness = new Harness(120);
 

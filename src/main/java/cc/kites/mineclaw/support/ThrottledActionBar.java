@@ -55,6 +55,44 @@ public final class ThrottledActionBar implements AutoCloseable {
         if (closed || delta.isEmpty()) {
             return;
         }
+        append(delta, true);
+    }
+
+    /** Flushes the current streamed response and keeps its final frame alive for the next request. */
+    public synchronized void hold() {
+        if (!closed && dirty && !currentLine.isEmpty()) {
+            flushCurrent();
+        }
+    }
+
+    /** Atomically replaces the visible frame from one fully received intermediate response. */
+    public synchronized void replaceComplete(String content) {
+        Objects.requireNonNull(content, "content");
+        if (closed || content.isBlank()) {
+            return;
+        }
+        prepareReplacement();
+        append(content, false);
+        if (dirty && !currentLine.isEmpty()) {
+            flushCurrent();
+        } else {
+            dirty = false;
+        }
+    }
+
+    /** Atomically replaces model text with a trusted, already-rendered system activity frame. */
+    public synchronized void replaceActivity(Component message) {
+        Objects.requireNonNull(message, "message");
+        if (closed) {
+            return;
+        }
+        prepareReplacement();
+        visible = message;
+        output.show(message);
+        scheduleKeepAlive();
+    }
+
+    private void append(String delta, boolean streaming) {
         for (int index = 0; index < delta.length(); index++) {
             char value = delta.charAt(index);
             if (value == '\r') {
@@ -77,6 +115,9 @@ public final class ThrottledActionBar implements AutoCloseable {
             breakState = BreakState.NONE;
             paragraphHasInput = true;
             dirty |= currentLine.append(value);
+        }
+        if (!streaming) {
+            return;
         }
         if (dirty && replaceOnNextContent && !currentLine.isEmpty()) {
             flushCurrent();

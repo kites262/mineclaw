@@ -1,6 +1,6 @@
 # 安全模型
 
-Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文说明 v1.2.0 的信任来源、隔离范围和不能保证的事项。
+Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文说明 v1.3.0 的信任来源、隔离范围和不能保证的事项。
 
 ## 信任矩阵
 
@@ -9,18 +9,24 @@ Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文�
 | 玩家公屏输入 | 是 | 否 | 单 Turn、权限、速率限制、上下文预算 |
 | Workspace AGENTS/Skill | 是 | 否 | 只读文件根、大小/深度/超时；文档不是授权 |
 | 本地只读 Tool | 是 | 否 | 固定 Java handler、Folia 调度边界、结果脱敏 |
-| Provider 原生 Tool | 是 | 由 Provider 定义 | 严格注册的 Provider payload Schema |
+| Provider 原生 Tool | 是 | 由 Provider 定义 | 严格条目外层；payload 原样透传并由上游校验 |
 | 模型 `run_command` | 是 | 可能 | 本轮白名单、执行身份、目标玩家审批、结果语义 |
 | Reviewed Function | 模型只见调用契约 | 可能 | 参数 Schema、源码审核、capability、独立 JS 沙箱 |
 | 控制面配置与 `.env` | 否 | 决定系统边界 | 固定父目录、严格 YAML、原子快照、不可由文件 Tool 访问 |
 
 ## 公共会话玩家归属
 
-启用任一玩家身份表示时，玩家账号名在当前 Turn、成功或失败历史以及自动、手动压缩材料中保留。默认的 Chat Completions `name` 字段是权威归属；玩家在消息正文中写入的名称、`<player>` 标记或身份声明不会覆盖它。
+启用任一玩家身份表示时，玩家账号名在当前 Turn、已完成历史以及自动、手动压缩材料中保留。默认的 Chat Completions `name` 字段是权威归属；玩家在消息正文中写入的名称、`<player>` 标记或身份声明不会覆盖它。
 
 可选的正文兼容表示由 Mineclaw 生成外层 `<player>` / `<message>` 信封，并转义玩家名与原始消息，防止正文伪造结构身份。同时启用两种表示时仍以 `name` 字段为准；同时关闭时，模型不获得可信玩家归属。
 
 开启任一身份表示都会把 Minecraft 账号名随对话发送给 Provider，包括历史回放与压缩请求。Mineclaw 不因此发送 UUID、IP、权限或客户端信息。
+
+## 连续监听边界
+
+`/mineclaw listen on` 会把每条未带唤醒前缀的普通公屏消息也当作 Mineclaw 输入。这不会绕过 `mineclaw.command.chat`、玩家/全服冷却或全服单一活动 Turn；只有成功接受的隐式唤醒才会保持公开可见并补上 AI 前缀，被权限、限流或 busy 拒绝的消息会取消公屏发送并只向发起玩家报错。
+
+该开关是全服、进程内状态，默认只允许 OP 通过 `mineclaw.command.listen` 切换；插件禁用或服务器重启后会重置，`/mineclaw reload` 不会改变当前状态。开启前应明确告知玩家：普通公屏也会进入公共 Session 并发送给当前 Provider。
 
 ## 环境感知边界
 
@@ -66,7 +72,7 @@ Mineclaw 区分“请求被接受”“命令已分发”和“游戏效果已�
 | 明确控制台 `feedback` | 原样概括该反馈证明的内容 | 推断反馈没有覆盖的后续状态 |
 | error/timeout/cancelled | 本流程在该点失败或终止 | 自动假设后续步骤完成 |
 
-Function 结果会原样保留 `output.error_code`、`approval_status`、`operation_status`、`dispatch_status`、`execution_result`、`feedback` 和必要实体上下文。失败/超时 Turn 连同 Tool 证据会加入下一轮上下文，防止模型只看到泛化错误后继续误判。
+成功 Turn 会把 Function 结果连同 `output.error_code`、`approval_status`、`operation_status`、`dispatch_status`、`execution_result`、`feedback` 和必要实体上下文完整写入 Session。普通 Turn 的每次模型响应请求最多尝试三次；仍失败时整个未完成 Turn 不进入 Session，也不生成伪造的终止回复。如果失败发生前已经分发过有副作用的 Tool，这些证据不会进入后续模型上下文；运维应查看审计日志，不要自动重试可能已生效的副作用。
 
 玩家身份执行通常无法同步捕获游戏内反馈。对这类结果保守表述是协议要求，不是文案偏好。
 
@@ -114,8 +120,8 @@ Function 结果会原样保留 `output.error_code`、`approval_status`、`operat
 - 每个 Turn 固定使用开始时的配置、Provider/模型、Tool 和 Function 快照。
 - 模型切换只影响后续 Turn。
 - 公共 Session 同一时刻只有一个活动 Turn，避免公共历史和副作用交错。
-- `/mineclaw compact` 在活动 Turn 时排队，等待该 Turn 完整落入 Session 后执行。
-- 自动/手动压缩只有在完整摘要成功且 Session generation 未变化时原子发布；失败保留原历史。
+- `/mineclaw compact` 在活动 Turn 时排队，等待该 Turn 结束后执行；只有成功产生最终回复的 Turn 会先发布到 Session。
+- 自动/手动压缩只有在完整摘要成功且 Session generation 未变化时原子发布上下文投影；失败保留原投影，无论成败都不删除已完成 Turn 的无损档案。
 
 ## MiniMessage 与交互
 

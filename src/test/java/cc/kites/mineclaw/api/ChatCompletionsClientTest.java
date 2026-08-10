@@ -487,6 +487,22 @@ class ChatCompletionsClientTest {
     }
 
     @Test
+    void retriesMalformedResponsesThreeTimesThenFails() {
+        AtomicInteger attempts = new AtomicInteger();
+        server.createContext("/v1/chat/completions", exchange -> {
+            attempts.incrementAndGet();
+            respond(exchange, 200, "{not-json");
+        });
+
+        assertThatThrownBy(() -> client().complete(
+                request(List.of(ApiMessage.user("retry parse")), List.of(), 2),
+                "secret", IGNORE_STREAM).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(ChatCompletionException.class);
+        assertThat(attempts).hasValue(3);
+    }
+
+    @Test
     void retriesRecoverableErrorObjectEvenWhenStatusIsSuccessful() {
         AtomicInteger attempts = new AtomicInteger();
         server.createContext("/v1/chat/completions", exchange -> {

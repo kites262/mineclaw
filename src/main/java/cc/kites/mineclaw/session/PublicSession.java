@@ -1,22 +1,20 @@
 package cc.kites.mineclaw.session;
 
 import cc.kites.mineclaw.api.ApiMessage;
-import cc.kites.mineclaw.api.ToolCall;
-
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /** Server-wide, in-memory public conversation history, retained as indivisible Turns. */
 public final class PublicSession {
-    private static final String INTERRUPTED_TOOL_RESULT = """
-            {"status":"cancelled","output":{"error_code":"turn_interrupted","message":"Tool call did not complete before the Turn ended"}}
-            """.strip();
-
+    /** Lossless completed-Turn archive for the lifetime of this Session. */
     private final ArrayList<List<ApiMessage>> turns = new ArrayList<>();
+    /** Bounded/compacted projection used to construct model requests. */
+    private final ArrayList<List<ApiMessage>> contextTurns = new ArrayList<>();
     private String summary = "";
     private String promptCacheKey = newPromptCacheKey();
     private long revision;
@@ -26,12 +24,12 @@ public final class PublicSession {
     }
 
     public synchronized List<ApiMessage> snapshot(int maxMessages) {
-        return flatten(selectedTurns(maxMessages));
+        return flatten(selectedContextTurns(maxMessages));
     }
 
     /** Immutable summary plus complete raw-Turn boundaries used to build one active Turn. */
     public synchronized Snapshot snapshotState(int maxMessages) {
-        return new Snapshot(revision, summary, selectedTurns(maxMessages), promptCacheKey);
+        return new Snapshot(revision, summary, selectedContextTurns(maxMessages), promptCacheKey);
     }
 
     /** Publishes a successful model-generated summary only if the source Session is unchanged. */
@@ -46,56 +44,21 @@ public final class PublicSession {
         return publishReplacement(newSummary, retainedTurns, maxMessages);
     }
 
-    /** Stores a successful Turn compactly as the public user request and final assistant answer. */
-    public synchronized void appendCompletedTurn(String playerName, String user, String assistant,
-                                                 int maxMessages) {
-        appendTurn(List.of(ApiMessage.user(playerName, user), ApiMessage.assistant(assistant)), maxMessages);
-    }
-
-    /**
-     * Stores a failed Turn with its complete Tool transcript and a synthetic terminal assistant message.
-     * Any Tool call interrupted by the failure receives a stable cancellation result so the next API request
-     * never contains an incomplete assistant/tool-call frame.
-     */
-    public synchronized void appendFailedTurn(List<ApiMessage> partialTurn, String outcome,
-                                              int maxMessages) {
-        Objects.requireNonNull(partialTurn, "partialTurn");
-        Objects.requireNonNull(outcome, "outcome");
-        if (partialTurn.isEmpty() || !partialTurn.getFirst().role().equals("user")) {
-            throw new IllegalArgumentException("failed Turn must begin with a user message");
-        }
-        ArrayList<ApiMessage> completed = new ArrayList<>(partialTurn.size() + 2);
-        LinkedHashMap<String, ToolCall> pending = new LinkedHashMap<>();
-        for (ApiMessage message : partialTurn) {
-            if (message.role().equals("assistant") && !message.toolCalls().isEmpty()) {
-                if (!pending.isEmpty()) {
-                    appendInterruptedResults(completed, pending);
-                }
-                completed.add(message);
-                message.toolCalls().forEach(call -> pending.put(call.id(), call));
-            } else if (message.role().equals("tool") && message.toolCallId() != null) {
-                completed.add(message);
-                pending.remove(message.toolCallId());
-            } else {
-                if (!pending.isEmpty()) {
-                    appendInterruptedResults(completed, pending);
-                }
-                completed.add(message);
-            }
-        }
-        appendInterruptedResults(completed, pending);
-        completed.add(ApiMessage.assistant(outcome));
-        appendTurn(completed, maxMessages);
+    /** Stores a successful Turn with every assistant Tool Call and matching Tool Result intact. */
+    public synchronized void appendCompletedTurn(List<ApiMessage> completedTurn, int maxMessages) {
+        validateCompletedTurn(completedTurn);
+        appendTurn(completedTurn, maxMessages);
     }
 
     public synchronized void clear() {
         turns.clear();
+        contextTurns.clear();
         summary = "";
         promptCacheKey = newPromptCacheKey();
         revision++;
     }
 
-    /** Number of API messages currently retained, including failed-Turn Tool frames. */
+    /** Number of losslessly archived API messages across complete successful Turns. */
     public synchronized int size() {
         return turns.stream().mapToInt(List::size).sum();
     }
@@ -106,7 +69,8 @@ public final class PublicSession {
             throw new IllegalArgumentException("Turn must contain at least one message");
         }
         turns.add(immutable);
-        trim(maxMessages);
+        contextTurns.add(immutable);
+        trimContext(maxMessages);
         revision++;
     }
 
@@ -114,33 +78,37 @@ public final class PublicSession {
                                                   List<List<ApiMessage>> retainedTurns,
                                                   int maxMessages) {
         summary = replacementSummary;
-        turns.clear();
-        retainedTurns.forEach(turn -> turns.add(List.copyOf(turn)));
-        trim(maxMessages);
+        contextTurns.clear();
+        retainedTurns.forEach(turn -> contextTurns.add(List.copyOf(turn)));
+        trimContext(maxMessages);
         revision++;
         return Optional.of(snapshotState(maxMessages));
     }
 
-    private void trim(int maxMessages) {
+    private void trimContext(int maxMessages) {
         if (maxMessages <= 0) {
-            turns.clear();
+            contextTurns.clear();
             return;
         }
-        while (turns.size() > 1 && size() > maxMessages) {
-            turns.removeFirst();
+        while (contextTurns.size() > 1 && contextSize() > maxMessages) {
+            contextTurns.removeFirst();
         }
     }
 
-    private List<List<ApiMessage>> selectedTurns(int maxMessages) {
-        if (maxMessages <= 0 || turns.isEmpty()) {
+    private int contextSize() {
+        return contextTurns.stream().mapToInt(List::size).sum();
+    }
+
+    private List<List<ApiMessage>> selectedContextTurns(int maxMessages) {
+        if (maxMessages <= 0 || contextTurns.isEmpty()) {
             return List.of();
         }
-        int from = turns.size() - 1;
-        int count = turns.get(from).size();
-        while (from > 0 && count + turns.get(from - 1).size() <= maxMessages) {
-            count += turns.get(--from).size();
+        int from = contextTurns.size() - 1;
+        int count = contextTurns.get(from).size();
+        while (from > 0 && count + contextTurns.get(from - 1).size() <= maxMessages) {
+            count += contextTurns.get(--from).size();
         }
-        return List.copyOf(turns.subList(from, turns.size()));
+        return List.copyOf(contextTurns.subList(from, contextTurns.size()));
     }
 
     private static List<ApiMessage> flatten(List<List<ApiMessage>> source) {
@@ -149,10 +117,41 @@ public final class PublicSession {
         return List.copyOf(flattened);
     }
 
-    private static void appendInterruptedResults(List<ApiMessage> target,
-                                                 LinkedHashMap<String, ToolCall> pending) {
-        pending.keySet().forEach(callId -> target.add(ApiMessage.tool(callId, INTERRUPTED_TOOL_RESULT)));
-        pending.clear();
+    private static void validateCompletedTurn(List<ApiMessage> turn) {
+        Objects.requireNonNull(turn, "turn");
+        if (turn.size() < 2 || !turn.getFirst().role().equals("user")) {
+            throw new IllegalArgumentException("completed Turn must begin with a user message");
+        }
+        ApiMessage last = turn.getLast();
+        if (!last.role().equals("assistant") || !last.toolCalls().isEmpty()
+                || last.content() == null || last.content().isBlank()) {
+            throw new IllegalArgumentException("completed Turn must end with a final assistant message");
+        }
+        Set<String> pending = new HashSet<>();
+        Set<String> seen = new HashSet<>();
+        for (ApiMessage message : turn) {
+            if (message.role().equals("assistant") && !message.toolCalls().isEmpty()) {
+                if (!pending.isEmpty()) {
+                    throw new IllegalArgumentException("assistant Tool Call frames must not overlap");
+                }
+                message.toolCalls().forEach(call -> {
+                    if (!seen.add(call.id())) {
+                        throw new IllegalArgumentException("duplicate Tool Call id in completed Turn: " + call.id());
+                    }
+                    pending.add(call.id());
+                });
+            } else if (message.role().equals("tool")) {
+                if (message.toolCallId() == null || !pending.remove(message.toolCallId())) {
+                    throw new IllegalArgumentException("Tool Result has no pending Tool Call: "
+                            + message.toolCallId());
+                }
+            } else if (!pending.isEmpty()) {
+                throw new IllegalArgumentException("completed Turn contains an incomplete Tool Call frame");
+            }
+        }
+        if (!pending.isEmpty()) {
+            throw new IllegalArgumentException("completed Turn contains an incomplete Tool Call frame");
+        }
     }
 
     private static String newPromptCacheKey() {

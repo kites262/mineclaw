@@ -73,7 +73,7 @@ Skill 应写清：触发场景、准确名称、参数 Schema、前置观察、�
 
 v1.2.0 删除了 `look_block`、`feet_block` 和 `inventory`。Function capability 必须分别迁移到 `native_tool.call.block_inspect` 或 `native_tool.call.item_inspect`，并传入对应模式；旧 handler 会被拒绝。
 
-Provider 能力属于 `providers.yml providers.*.tools`，payload 按 Provider 原生格式进入请求。目前默认示例是 MiMo `web_search`。这类 Tool 不会转换为 function，也不能被 JavaScript Function 通过 `native_tool.call` 间接调用；Function 的 native capability 只面向本地 handler。
+Provider 能力属于 `providers.yml providers.*.tools`。每个条目的 `id` 只用于目录身份和诊断，`payload` 作为 JSON object 按 Provider 原生格式原样进入请求；Mineclaw 不校验或改写 payload 内部字段，默认示例是 MiMo `web_search`。即使 payload 使用 `type: function`，它也只会透传给上游，不会注册成本地 handler，也不能被 JavaScript Function 通过 `native_tool.call` 间接调用；Function 的 native capability 只面向本地 handler。
 
 ## 编写 Function
 

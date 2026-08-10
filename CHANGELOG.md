@@ -2,12 +2,38 @@
 
 Mineclaw 使用语义化版本。v1.0.0 是重新设计的第一个稳定大版本，与全部 v0.x 配置不兼容。
 
-## 1.2.1 — Unreleased
+## 1.3.0 — 2026-08-10
+
+### Provider Tool
+
+- `providers.yml` 中的 Provider Tool payload 不再受 MiMo `web_search` 硬编码内部 Schema 限制；其外层仍须为 JSON object，内部字段不校验、不改写并原样发送给对应上游。
 
 ### 公共会话身份
 
 - 明确告知模型当前与历史每条玩家消息各自的权威身份来源，避免将标准 `name` 字段误解为仅对当前消息有效。
 - 四种玩家身份开关组合分别声明 `name` 字段、正文信封或无可信归属的语义。
+
+### 连续监听
+
+- 新增 `/mineclaw listen [on|off]` 和 `mineclaw.command.listen` 权限，可在运行期开启或查看全服连续监听。
+- 开启后，未带唤醒前缀的普通公屏消息也会进入 Mineclaw；成功接受的隐式唤醒消息会在公屏补上 AI 前缀，原有聊天权限、冷却与全服单 Turn 约束仍然生效。
+- 监听开关只存在于当前插件进程，插件禁用或服务器重启后回到关闭状态。
+
+### Action Bar
+
+- 第一轮模型响应继续按 Delta 节流渲染并在完成后保持；后续工具调用中间响应只在完整接收后原子替换当前帧。
+- 模型返回 Tool Call 时显示单帧 `◆ <tool>, <tool>... ◆` 安全名称摘要；两侧使用不参与 Emoji 呈现的 Unicode 几何符号，纯 `tool_calls` 响应不再只保留 `Thinking...`。
+- 发生 Tool Call 后的最终公屏回复不再覆盖 Action Bar，公屏发送后让最后一个中间帧自然淡出；第一轮无 Tool 回复仍保留原有流式展示。
+
+### Session 完整性
+
+- 成功 Turn 不再压扁为 user 与最终 assistant 文本；assistant Tool Call、Tool Result、Provider 回放字段和未截断最终回复作为一个完整 Turn 原子写入无损 Session 档案。
+- `max_messages` 与上下文压缩只调整送给模型的上下文投影，不再删除当前插件进程中的原始完整 Turn；进程存续期间只有显式 clear 会清空档案，插件重启仍会重建内存 Session。
+- 普通 Turn 的每次模型响应请求最多尝试三次；仍失败时丢弃整个未完成 Turn 并向玩家报错，不再把合成失败记录写入 Session。
+
+### 文档与集成
+
+- 更新 KitesPlaces 示例 Skill，区分不覆盖的 `warp create` 与明确覆盖的 `warp set`，并同步新的 Unicode 传送点名称规则。
 
 ## 1.2.0 — 2026-08-05
 

@@ -120,7 +120,6 @@ public final class ProviderCatalogLoader {
                 throw invalid(toolPath + ".id must be unique and match " + ID.pattern());
             }
             JsonObject payload = object(tool.get("payload"), toolPath + ".payload", false);
-            validateProviderTool(id, type, payload, toolPath + ".payload");
             parsedTools.add(new ProviderCatalog.ProviderTool(toolId, payload));
         }
         return new ProviderCatalog.Provider(id, new ProviderCatalog.Api(type, baseUrl, apiKey),
@@ -200,33 +199,6 @@ public final class ProviderCatalogLoader {
         return new ProviderCatalog.Model(reference.full(), reference.providerId(), reference.modelId(),
                 new ProviderCatalog.Limits(context, output, compactTrigger), promptCacheKey,
                 interleaved, extraBody);
-    }
-
-    private static void validateProviderTool(String providerId, ProviderCatalog.ApiType apiType,
-                                             JsonObject payload, String path) throws ConfigException {
-        String type = string(payload.get("type"), path + ".type");
-        if (type.equals("function")) {
-            throw invalid(path + ".type function is reserved for local Tools");
-        }
-        if (!(providerId.equals("mimo") && apiType == ProviderCatalog.ApiType.OPENAI_CHAT_COMPLETIONS
-                && type.equals("web_search"))) {
-            throw invalid(path + ".type has no registered Provider Tool schema");
-        }
-        exact(payload, Set.of("type", "max_keyword", "force_search", "limit", "user_location"), path, true);
-        integer(payload.get("max_keyword"), path + ".max_keyword", 1, 10);
-        bool(payload.get("force_search"), path + ".force_search");
-        integer(payload.get("limit"), path + ".limit", 1, 10);
-        JsonObject location = object(payload.get("user_location"), path + ".user_location", true);
-        exact(location, Set.of("type", "country", "region", "city"), path + ".user_location", true);
-        if (!string(location.get("type"), path + ".user_location.type").equals("approximate")) {
-            throw invalid(path + ".user_location.type must be approximate");
-        }
-        for (String field : List.of("country", "region", "city")) {
-            String value = string(location.get(field), path + ".user_location." + field);
-            if (value.isBlank() || value.codePointCount(0, value.length()) > 128) {
-                throw invalid(path + ".user_location." + field + " must contain 1-128 code points");
-            }
-        }
     }
 
     private String credential(String configured, String path, MineclawConfig.SecretEnvironment dotenv)

@@ -6,6 +6,7 @@ import cc.kites.mineclaw.function.FunctionCatalog;
 import cc.kites.mineclaw.function.FunctionCatalogLoader;
 import cc.kites.mineclaw.interaction.InteractionManager;
 import cc.kites.mineclaw.javascript.JavaScriptWorkflowRuntime;
+import cc.kites.mineclaw.session.ServerListenMode;
 import cc.kites.mineclaw.support.FoliaTasks;
 import cc.kites.mineclaw.support.AuditLogger;
 import cc.kites.mineclaw.support.MessageService;
@@ -38,6 +39,7 @@ import java.util.function.BooleanSupplier;
 public final class MineclawCommand implements BasicCommand {
     private final ControlPlaneStore config;
     private final TurnCoordinator turns;
+    private final ServerListenMode listenMode;
     private final InteractionManager interactions;
     private final ToolCatalogLoader toolLoader;
     private final Path dataRoot;
@@ -55,7 +57,8 @@ public final class MineclawCommand implements BasicCommand {
     private final AuditLogger audit;
     private final BooleanSupplier controlPlaneReady;
 
-    public MineclawCommand(ControlPlaneStore config, TurnCoordinator turns, CommandExecutor commands,
+    public MineclawCommand(ControlPlaneStore config, TurnCoordinator turns,
+                           ServerListenMode listenMode, CommandExecutor commands,
                            ToolCatalogLoader toolLoader, Path dataRoot, Path workspaceRoot,
                            Path toolsFile,
                            FunctionCatalogLoader functionLoader, Path functionsFile,
@@ -68,6 +71,7 @@ public final class MineclawCommand implements BasicCommand {
                            BooleanSupplier controlPlaneReady) {
         this.config = Objects.requireNonNull(config, "config");
         this.turns = Objects.requireNonNull(turns, "turns");
+        this.listenMode = Objects.requireNonNull(listenMode, "listenMode");
         this.interactions = Objects.requireNonNull(commands, "commands").interactions();
         this.toolLoader = Objects.requireNonNull(toolLoader, "toolLoader");
         this.dataRoot = Objects.requireNonNull(dataRoot, "dataRoot").toAbsolutePath().normalize();
@@ -97,6 +101,7 @@ public final class MineclawCommand implements BasicCommand {
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "clear" -> unary(sender, args, this::clear);
             case "compact" -> unary(sender, args, this::compact);
+            case "listen" -> listen(sender, args);
             case "approve" -> decide(sender, args, true);
             case "reject" -> decide(sender, args, false);
             case "select" -> select(sender, args);
@@ -122,6 +127,33 @@ public final class MineclawCommand implements BasicCommand {
         }
         turns.clearSession();
         renderAndSend(sender, "clear_success");
+    }
+
+    private void listen(CommandSender sender, String[] args) {
+        if (!permission(sender, "mineclaw.command.listen")) {
+            return;
+        }
+        if (args.length == 1) {
+            renderAndSend(sender, listenMode.isEnabled()
+                    ? "listen_status_on" : "listen_status_off");
+            return;
+        }
+        if (args.length != 2) {
+            renderAndSend(sender, "usage");
+            return;
+        }
+        if (args[1].equalsIgnoreCase("on")) {
+            listenMode.enable();
+            renderAndSend(sender, "listen_enabled");
+            return;
+        }
+        if (args[1].equalsIgnoreCase("off")) {
+            listenMode.disable();
+            renderAndSend(sender, "listen_disabled", Map.of(
+                    "prefix", config.get().config().chat().publicPrefix()));
+            return;
+        }
+        renderAndSend(sender, "usage");
     }
 
     private void compact(CommandSender sender) {
@@ -393,6 +425,12 @@ public final class MineclawCommand implements BasicCommand {
     @Override
     public Collection<String> suggest(CommandSourceStack source, String[] args) {
         CommandSender sender = source.getSender();
+        if (args.length == 2 && args[0].equalsIgnoreCase("listen")
+                && sender.hasPermission("mineclaw.command.listen")) {
+            String prefix = args[1].toLowerCase(Locale.ROOT);
+            return List.of("on", "off").stream()
+                    .filter(value -> value.startsWith(prefix)).toList();
+        }
         if (args.length == 2 && args[0].equalsIgnoreCase("tools")
                 && sender.hasPermission("mineclaw.command.tools")) {
             String prefix = args[1].toLowerCase(Locale.ROOT);
@@ -414,6 +452,7 @@ public final class MineclawCommand implements BasicCommand {
             return List.of();
         }
         ArrayList<String> values = new ArrayList<>();
+        add(values, "listen", sender.hasPermission("mineclaw.command.listen"));
         add(values, "clear", sender.hasPermission("mineclaw.command.clear"));
         add(values, "compact", sender.hasPermission("mineclaw.command.compact"));
         add(values, "reload", sender.hasPermission("mineclaw.command.reload"));
@@ -426,7 +465,8 @@ public final class MineclawCommand implements BasicCommand {
 
     @Override
     public boolean canUse(CommandSender sender) {
-        return sender.hasPermission("mineclaw.command.clear")
+        return sender.hasPermission("mineclaw.command.listen")
+                || sender.hasPermission("mineclaw.command.clear")
                 || sender.hasPermission("mineclaw.command.compact")
                 || sender.hasPermission("mineclaw.command.approve")
                 || sender.hasPermission("mineclaw.command.reload")

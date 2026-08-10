@@ -20,6 +20,7 @@ import cc.kites.mineclaw.listener.ApprovalGestureListener;
 import cc.kites.mineclaw.listener.InteractionLifecycleListener;
 import cc.kites.mineclaw.listener.PublicChatListener;
 import cc.kites.mineclaw.session.PublicSession;
+import cc.kites.mineclaw.session.ServerListenMode;
 import cc.kites.mineclaw.session.RateLimiter;
 import cc.kites.mineclaw.support.AuditLogger;
 import cc.kites.mineclaw.support.FoliaTasks;
@@ -60,6 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MineclawPlugin extends JavaPlugin {
     private ControlPlaneStore controlPlane;
     private PublicSession session;
+    private ServerListenMode listenMode;
     private RateLimiter rateLimiter;
     private FoliaTasks tasks;
     private MessageService messages;
@@ -76,6 +78,7 @@ public final class MineclawPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         session = new PublicSession();
+        listenMode = new ServerListenMode();
         rateLimiter = new RateLimiter();
         tasks = new FoliaTasks(this);
         channel = new PlayerChannel(getServer(), tasks);
@@ -151,11 +154,12 @@ public final class MineclawPlugin extends JavaPlugin {
                     ioExecutor, getLogger(), () -> isEnabled() && controlPlaneReady.get());
 
             getServer().getPluginManager().registerEvents(
-                    new PublicChatListener(controlPlane, turns, messages, channel, tasks, ioExecutor), this);
+                    new PublicChatListener(controlPlane, turns, listenMode,
+                            messages, channel, tasks, ioExecutor), this);
             getServer().getPluginManager().registerEvents(new ApprovalGestureListener(commandExecutor), this);
             getServer().getPluginManager().registerEvents(new InteractionLifecycleListener(approvals), this);
             registerCommand("mineclaw", "Manage Mineclaw", List.of(),
-                    new MineclawCommand(controlPlane, turns, commandExecutor, toolCatalog,
+                    new MineclawCommand(controlPlane, turns, listenMode, commandExecutor, toolCatalog,
                             root, workspaceRoot, toolsFile,
                             functionCatalogLoader, functionsFile, new SkillFunctionReferenceValidator(),
                             messages, channel, tasks, ioExecutor, this::reloadFromCommand,
@@ -170,6 +174,9 @@ public final class MineclawPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         HandlerList.unregisterAll(this);
+        if (listenMode != null) {
+            listenMode.reset();
+        }
         // Close script admission and side-effect gates before any interaction completion can resume them.
         if (javascriptRuntime != null) {
             javascriptRuntime.close();

@@ -9,7 +9,7 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
 
 <p>
-  <a href="https://github.com/kites262/mineclaw/releases/tag/1.2.0"><img alt="Mineclaw 1.2.0" src="https://img.shields.io/badge/Mineclaw-1.2.0-4c8bf5"></a>
+  <a href="https://github.com/kites262/mineclaw/releases/tag/1.3.0"><img alt="Mineclaw 1.3.0" src="https://img.shields.io/badge/Mineclaw-1.3.0-4c8bf5"></a>
   <img alt="Minecraft 26.2" src="https://img.shields.io/badge/Minecraft-26.2-62b47a?logo=minecraft">
   <img alt="Paper and Folia" src="https://img.shields.io/badge/Paper%20%2F%20Folia-native-efc75e">
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-e76f00?logo=openjdk">
@@ -176,8 +176,8 @@ Mineclaw 位于玩家、世界、服务器知识和插件生态的交汇处。�
 > **Runtime target:** Paper 26.2 or Folia 26.2 with Java 25. Other server, Minecraft, and Java versions are outside the current compatibility promise.<br>
 > **运行目标：** Paper 26.2 或 Folia 26.2 + Java 25。其他服务端、Minecraft 或 Java 版本不在当前兼容承诺内。
 
-1. Download `Mineclaw-1.2.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) and place it in the server's `plugins/` directory.<br>
-   从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.2.0.jar`，放入服务端 `plugins/`。
+1. Download `Mineclaw-1.3.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) and place it in the server's `plugins/` directory.<br>
+   从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.3.0.jar`，放入服务端 `plugins/`。
 
 2. Start the server once so Mineclaw can generate its default files, then stop it.<br>
    启动一次，让 Mineclaw 生成默认文件，然后停止服务端。
@@ -271,8 +271,8 @@ Mineclaw 能够接触真实游戏状态并推动服务器任务，因此 Workspa
 - **Player decisions stay with players.** Confirmation and selection can be delivered as native, configurable in-game interactions.<br>
   **玩家决定留给玩家。** 确认与选择可以通过原生且可配置的游戏内交互完成。
 
-- **Results keep their evidence.** Tool, Function, approval, dispatch, and failure context remain available to later reasoning.<br>
-  **结果保留证据。** Tool、Function、审批、分发与失败上下文会继续提供给后续推理。
+- **Completed results keep their full evidence.** Tool, Function, approval, and dispatch frames remain available to later reasoning; failed response attempts are retried and never published as synthetic history.<br>
+  **已完成结果保留完整证据。** Tool、Function、审批与分发帧会继续提供给后续推理；失败的响应尝试会重试，不会作为合成历史写入 Session。
 
 Read the complete trust model, command paths, JavaScript runtime, and result semantics in the [security documentation](docs/security.md).<br>
 完整的信任模型、命令路径、JavaScript 运行环境与结果语义见[安全文档](docs/security.md)。
@@ -281,8 +281,8 @@ Read the complete trust model, command paths, JavaScript runtime, and result sem
 
 **长对话也有自己的整理节奏**
 
-A public Session gives players and Mineclaw a shared history. When player attribution is enabled, each request keeps its Minecraft account attribution through replay and compaction, so plans, failures, preferences, and completed steps remain attached to the right participant. As the conversation grows, Mineclaw compacts older history while preserving recent turns and task evidence that still matters.<br>
-公共 Session 让玩家与 Mineclaw 共享一段连续经历。启用玩家归属时，每条请求在历史回放和压缩中都保留 Minecraft 账号归属，使计划、失败、偏好和已完成步骤始终对应正确参与者。对话变长时，Mineclaw 会整理较早历史，同时保留近期内容和仍然重要的任务证据。
+A public Session gives players and Mineclaw a shared history. Every completed Turn is archived losslessly with player attribution, Tool Calls, Tool Results, Provider replay fields, and the untruncated final answer. As the conversation grows, Mineclaw may compact the model-context projection while leaving that raw Session archive intact.<br>
+公共 Session 让玩家与 Mineclaw 共享一段连续经历。每个已完成 Turn 都会连同玩家归属、Tool Call、Tool Result、Provider 回放字段和未截断最终回复无损归档。对话变长时，Mineclaw 可以整理送给模型的上下文投影，但不会删除 Session 原始档案。
 
 The default model configuration provides a 128K context window, 16K maximum output, and a 100K automatic compaction threshold. Administrators can also run `/mineclaw compact` at any time. Token accounting, queuing, and overflow recovery are covered in the [configuration reference](docs/configuration.md#模型限制与自动压缩).<br>
 默认模型配置提供 128K 上下文、16K 最大输出和 100K 自动整理界限；管理员也可以随时使用 `/mineclaw compact` 主动整理。Token 计算、排队和溢出恢复见[配置参考](docs/configuration.md#模型限制与自动压缩)。
@@ -290,6 +290,9 @@ The default model configuration provides a 128K context window, 16K maximum outp
 ## 🎛️ Administrative commands
 
 **管理命令**
+
+- **`/mineclaw listen [on|off]`** — Inspect or change the process-local server-wide listen mode.<br>
+  查看或切换服务器连续监听；开启后，符合现有权限与限流条件的普通公屏消息无需前缀也能唤醒 Mineclaw，成功接收后会显示 AI 前缀；插件禁用或服务器重启后重置。Default permission / 默认权限：OP。
 
 - **`/mineclaw clear`** — Clear the public Session and rotate its prompt cache key.<br>
   清空公共 Session，并轮换 prompt cache key。Default permission / 默认权限：OP。
@@ -338,12 +341,12 @@ Public chat access uses `mineclaw.command.chat` and is enabled by default. See t
 ```bash
 git clone https://github.com/kites262/mineclaw.git
 cd mineclaw
-git checkout 1.2.0
+git checkout 1.3.0
 ./gradlew --no-daemon clean test assemblePlugin
 ```
 
-The deployable artifact is `build/plugins/Mineclaw-1.2.0.jar`. The JAR uses reproducible file ordering and timestamps and includes Apache-2.0, NOTICE, and third-party license resources.<br>
-可部署产物位于 `build/plugins/Mineclaw-1.2.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
+The deployable artifact is `build/plugins/Mineclaw-1.3.0.jar`. The JAR uses reproducible file ordering and timestamps and includes Apache-2.0, NOTICE, and third-party license resources.<br>
+可部署产物位于 `build/plugins/Mineclaw-1.3.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
 
 ## ✅ Compatibility
 

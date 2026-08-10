@@ -10,7 +10,7 @@ providers:
     transport:
       timeout_ms: 60000
       retry:
-        max_retries: 5
+        max_retries: 2
         backoff_ms: 500
     tools:
       - id: mimo_web_search

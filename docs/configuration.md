@@ -1,6 +1,6 @@
 # 配置参考
 
-本文对应 Mineclaw 1.2.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
+本文对应 Mineclaw 1.3.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
 
 ## 文件与生效时机
 
@@ -33,7 +33,7 @@
 | `chat.public_prefix` | `@ai` | 公屏前缀 |
 | `chat.wake_pattern` | 空 | 可选 Java 正则唤醒规则；与前缀不能同时为空 |
 | `chat.reply_max_chars` | `2000` | 最终公屏回复字符上限 |
-| `chat.actionbar_max_chars` | `120` | Action Bar 流式帧字符上限 |
+| `chat.actionbar_max_chars` | `120` | Action Bar 中间响应帧字符上限 |
 | `tools.enabled` | `true` | 本地 Tool 总开关 |
 | `tools.disabled` | `[]` | 按准确 handler 禁用 Tool |
 | `functions.max_file_chars` | `1048576` | `functions.yml` 最大字符数 |
@@ -94,7 +94,7 @@ providers:
     transport:
       timeout_ms: 60000
       retry:
-        max_retries: 5
+        max_retries: 2
         backoff_ms: 500
     tools:
       - id: mimo_web_search
@@ -135,22 +135,13 @@ models:
 
 ### Transport
 
-`timeout_ms` 支持 `1000–600000`。`max_retries` 支持 `0–10`，`backoff_ms` 支持 `0–60000`。只有连接失败、超时、HTTP 408/429 与 5xx 重试；普通 4xx 不重试。退避为有上限、带抖动的指数策略。
+`timeout_ms` 支持 `1000–600000`。`max_retries` 支持 `0–10`，`backoff_ms` 支持 `0–60000`。普通 Turn 的每次模型响应请求最多三次总尝试，因此实际重试次数为 `min(max_retries, 2)`；上下文压缩请求仍按配置的 `max_retries` 执行。响应解析损坏、连接失败、超时、HTTP 408/429 与 5xx 可以重试，普通 4xx 不重试。退避为有上限、带抖动的指数策略。三次仍失败时，整个未完成 Turn 不写入 Session。
 
 ### Provider 原生 Tool
 
-`providers.*.tools` 中的 `payload` 会按 Provider 协议原样加入 Chat Completions `tools`。它不会转换成 `type: function`。`id` 只用于目录身份和诊断，不进入 payload。
+`providers.*.tools` 中的 `payload` 会按 Provider 协议原样加入 Chat Completions `tools`，Mineclaw 不校验或改写其内部字段。`id` 只用于目录身份和诊断，不进入 payload。Provider 是否支持该 Tool 及其字段由上游 API 校验。
 
-v1.0.0 注册的 Provider 原生 Schema 是 MiMo `web_search`，字段为：
-
-- `type: web_search`
-- `max_keyword`: `1–10`
-- `force_search`: boolean
-- `limit`: `1–10`
-- `user_location.type`: 固定 `approximate`
-- `country`、`region`、`city`: 非空字符串，各不超过 128 个 code point
-
-本地 function Tool 只能位于 `tools.yml`；Provider Tool payload 使用 `type: function` 会被拒绝。
+每个 entry 的外层只允许 `id` 与 `payload`，`payload` 必须是 JSON object。本地 Tool 仍在 `tools.yml` 中独立配置；Provider payload 即使使用 `type: function` 也只会透传给上游，不会注册到本地 ToolDispatcher。
 
 ### 模型限制与自动压缩
 
@@ -158,7 +149,7 @@ v1.0.0 注册的 Provider 原生 Schema 是 MiMo `web_search`，字段为：
 - `max_output_tokens`: 至少 1，不能超过上下文窗口。
 - `compact_trigger_tokens`: 可省略；存在时必须给输出预算留出空间。
 
-接口返回 usage 时，Mineclaw 用真实数据校准后续估算。未返回时使用本地估算来保护输入窗口，但不虚构 Provider 已消费的 token。达到压缩界限时，旧的完整 Turn 使用同一模型/Provider 快照进行无 Tool 摘要；发布失败时原 Session 不变。
+接口返回 usage 时，Mineclaw 用真实数据校准后续估算。未返回时使用本地估算来保护输入窗口，但不虚构 Provider 已消费的 token。达到压缩界限时，旧的完整 Turn 使用同一模型/Provider 快照进行无 Tool 摘要；压缩只替换后续请求使用的上下文投影，无损 Session 档案仍保留原始 Turn。发布失败时上下文投影和档案均不变。
 
 ### 请求扩展
 
@@ -258,6 +249,8 @@ Function 名区分大小写，必须匹配 `[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*`�
 - Function 选择：`interaction_select_layout`、option 模板、分隔符与拒绝按钮。
 
 模板里的 `<separator>`、`<prefix>`、`<title>` 等是 Mineclaw 占位组件，不是任意模型输入标签。完整默认值见 [`message.yml`](../src/main/resources/message.yml)。
+
+v1.3.0 新增 `listen_enabled`、`listen_disabled`、`listen_status_on`、`listen_status_off` 和 `actionbar_tools_called`，并在 `usage` 中加入 `listen`。已有 `message.yml` 不会被自动覆盖：缺失新 key 时运行时会警告并使用 JAR 内默认文案；要保持自定义主题，应把这些 key 按现有风格手工合入。
 
 ## Workspace
 

@@ -1,5 +1,6 @@
 package cc.kites.mineclaw.config;
 
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
@@ -142,7 +143,26 @@ class ProviderCatalogLoaderTest {
     }
 
     @Test
-    void rejectsUnregisteredProviderToolsAndLegacyEntryFields() {
+    void preservesOpaqueProviderToolPayloadWithoutSchemaValidation() throws Exception {
+        String source = baseWithTools("""
+              - id: provider_native_tool
+                payload:
+                  type: function
+                  vendor_option: {mode: custom, values: [1, 2, 3]}
+            """);
+
+        ProviderCatalog catalog = loader.parse(source, Map.of("KEY", "secret"));
+
+        assertThat(catalog.providers().get("mimo").tools()).singleElement().satisfies(tool -> {
+            assertThat(tool.id()).isEqualTo("provider_native_tool");
+            assertThat(tool.payload()).isEqualTo(JsonParser.parseString("""
+                    {"type":"function","vendor_option":{"mode":"custom","values":[1,2,3]}}
+                    """).getAsJsonObject());
+        });
+    }
+
+    @Test
+    void rejectsLegacyProviderToolEntryFields() {
         String source = baseWithTools("""
               - id: browser
                 enabled: true

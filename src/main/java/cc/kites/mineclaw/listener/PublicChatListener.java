@@ -2,11 +2,13 @@ package cc.kites.mineclaw.listener;
 
 import cc.kites.mineclaw.config.ControlPlaneStore;
 import cc.kites.mineclaw.config.MineclawConfig;
+import cc.kites.mineclaw.session.ServerListenMode;
 import cc.kites.mineclaw.support.MessageService;
 import cc.kites.mineclaw.support.PlayerChannel;
 import cc.kites.mineclaw.support.FoliaTasks;
 import cc.kites.mineclaw.turn.TurnCoordinator;
 import io.papermc.paper.event.player.AsyncChatEvent;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -31,16 +33,19 @@ public final class PublicChatListener implements Listener {
 
     private final ControlPlaneStore config;
     private final TurnCoordinator turns;
+    private final ServerListenMode listenMode;
     private final MessageService messages;
     private final PlayerChannel channel;
     private final FoliaTasks tasks;
     private final Executor ioExecutor;
 
     public PublicChatListener(ControlPlaneStore config, TurnCoordinator turns,
+                              ServerListenMode listenMode,
                               MessageService messages, PlayerChannel channel, FoliaTasks tasks,
                               Executor ioExecutor) {
         this.config = Objects.requireNonNull(config, "config");
         this.turns = Objects.requireNonNull(turns, "turns");
+        this.listenMode = Objects.requireNonNull(listenMode, "listenMode");
         this.messages = Objects.requireNonNull(messages, "messages");
         this.channel = Objects.requireNonNull(channel, "channel");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
@@ -50,11 +55,14 @@ public final class PublicChatListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onChat(AsyncChatEvent event) {
         MineclawConfig.Chat chat = config.get().config().chat();
-        Optional<String> parsed = parseWake(PLAIN.serialize(event.message()), chat);
+        Player player = event.getPlayer();
+        String text = PLAIN.serialize(event.message());
+        boolean listening = listenMode.isEnabled();
+        boolean implicitListen = listening && parseWake(text, chat).isEmpty();
+        Optional<String> parsed = parseInput(text, chat, listening);
         if (parsed.isEmpty()) {
             return;
         }
-        Player player = event.getPlayer();
         PermissionSnapshot permission = permissions(player);
         if (permission == null) {
             event.setCancelled(true);
@@ -76,7 +84,10 @@ public final class PublicChatListener implements Listener {
                 question, permission.bypassRateLimit());
         switch (result.status()) {
             case ACCEPTED -> {
-                // Keep the original AsyncChatEvent uncancelled: the question remains public.
+                // Keep the event public, but make implicit listen-mode questions recognizable.
+                if (implicitListen) {
+                    event.message(addListenPrefix(event.message(), chat.publicPrefix()));
+                }
             }
             case BUSY -> {
                 event.setCancelled(true);
@@ -132,6 +143,15 @@ public final class PublicChatListener implements Listener {
             return Optional.empty();
         }
         return Optional.of(text.substring(prefix.length()).stripLeading());
+    }
+
+    static Optional<String> parseInput(String text, MineclawConfig.Chat chat, boolean listening) {
+        Optional<String> wake = parseWake(text, chat);
+        return listening ? wake.or(() -> Optional.of(text)) : wake;
+    }
+
+    static Component addListenPrefix(Component message, String prefix) {
+        return Component.text(prefix + " ").append(message);
     }
 
     private static String nullToEmpty(String value) {
