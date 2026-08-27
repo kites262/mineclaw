@@ -68,7 +68,10 @@ final class ContextCompactor {
                 system, messages, List.of(), provider.transport().timeout(),
                 provider.transport().maxRetries(), provider.transport().backoff(), maxOutputTokens,
                 model.extraBody(), model.interleavedField(), promptCacheKey, requestDiagnostics,
-                includeMessageNames, includePlayerContentPrefix);
+                includeMessageNames, includePlayerContentPrefix,
+                provider.api().type() == ProviderCatalog.ApiType.OPENAI_RESPONSES
+                        ? ChatCompletionRequest.Protocol.RESPONSES
+                        : ChatCompletionRequest.Protocol.CHAT_COMPLETIONS);
         return client.complete(request, provider.api().apiKey(), IGNORE_STREAM)
                 .thenApply(result -> outcome(result, rawEstimate));
     }

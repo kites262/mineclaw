@@ -1,6 +1,6 @@
 # 配置参考
 
-本文对应 Mineclaw 1.3.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
+本文对应 Mineclaw 1.4.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
 
 ## 文件与生效时机
 
@@ -63,7 +63,7 @@
 | `turn.max_tool_rounds` | `80` | 单 Turn Tool 往返上限 |
 | `turn.max_tool_calls` | `240` | 单 Turn Tool 调用总数上限 |
 | `identity.name` | `Mineclaw` | 公屏展示名，不是玩家账号 |
-| `identity.include_player_name_field` | `true` | 是否在玩家消息中发送标准 `name` 字段 |
+| `identity.include_player_name_field` | `true` | Chat 是否发送 `name`；Responses 会把同一身份意图自动映射为已转义的正文信封 |
 | `identity.include_player_content_prefix` | `false` | 是否发送已转义的 `<player>` / `<message>` 身份信封 |
 | `environment.look_distance` | `12` | 准星方块最大观察距离 |
 | `environment.tool_cooldown_ms` | `10` | 同一玩家、同一环境 Tool 的调用冷却（毫秒） |
@@ -73,9 +73,9 @@
 
 `api` 和 `commands` 是明确拒绝的旧版 section：Provider 已迁到 `providers.yml`，模型命令策略已迁到 `whitelist.yml`。
 
-`identity.include_player_name_field` 与 `identity.include_player_content_prefix` 同时作用于当前 Turn、历史回放和压缩材料。启用标准 `name` 字段时，它是权威玩家身份，正文内的身份声明不可信。正文信封仅用于不支持 `name` 的 Provider，其玩家名与消息内容均会转义；两个开关都为 `false` 时不提供可信玩家归属。启用任一表示都会把 Minecraft 账号名随模型请求发送给 Provider；不发送 UUID、IP 或权限信息。
+`identity.include_player_name_field` 与 `identity.include_player_content_prefix` 同时作用于当前 Turn、历史回放和压缩材料。Chat Completions 在第一个开关启用时发送 `name`，并把它视为权威玩家身份。官方 Responses input message 没有 `name` 字段；为了保持同一身份意图且不发送非标准字段，只要任一开关启用，Responses 就使用 Mineclaw 生成并转义的 `<player>` / `<message>` 正文信封。正文内由玩家自行书写的名称、标签或身份声明不能覆盖该外层信封。两个开关都为 `false` 时不提供可信玩家归属。启用任一表示都会把 Minecraft 账号名随模型请求发送给 Provider；不发送 UUID、IP 或权限信息。
 
-`logging.level: ALL` 对普通 Turn、自动压缩、手动压缩与 transport 重试开启完整日志，并让每次实际 Chat Completions 请求输出完整 JSON 结构。`messages` 中超过 100 个 Unicode 字符的 `content` 和 `*_content` 只保留前 100 字并追加 `...`。`tools`、tool-call arguments、Provider 原生 Tool、模型参数和请求扩展原样保留。日志不包含 Authorization 或 API key；请求 Body 仍可能含玩家对话和服务器资料，只应在受控排障期间临时启用 `ALL`。其他日志级别不会输出请求 Body。
+`logging.level: ALL` 对普通 Turn、自动压缩、手动压缩与 transport 重试开启完整日志，并让每次实际 Provider 请求输出协议对应的 JSON 结构。Chat Completions 的 `messages` 文本和 Responses 的 `input` item 文本超过 100 个 Unicode 字符时只保留前 100 字并追加 `...`。`tools`、tool-call arguments、Provider 原生 Tool、模型参数和请求扩展原样保留。日志不包含 Authorization 或 API key；请求 Body 仍可能含玩家对话、reasoning、Tool 结果和服务器资料，只应在受控排障期间临时启用 `ALL`。其他日志级别不会输出请求 Body。
 
 ## `providers.yml` Schema 1
 
@@ -126,12 +126,43 @@ models:
 
 ### API 与凭据
 
-- 当前 API type 为 `openai_chat_completions`。`base_url` 是 HTTP(S) API 根地址，不含 `/chat/completions`。
+- `api.type` 支持并存的 `openai_chat_completions` 与 `openai_responses`；每个 Provider 独立选择，多个 Provider 可以指向同一 API 根和凭据。
+- `base_url` 是 HTTP(S) API 根地址，不能包含具体生成 endpoint。Mineclaw 分别追加 `/chat/completions` 或 `/responses`；以任一路径结尾的配置都会被拒绝。
 - 请求凭据统一使用标准 `Authorization: Bearer <api_key>`，不使用某一 Provider 的专有 header。
 - `api_key` 可以是字面量，但推荐使用完整的 `${ENV_NAME}` 引用。只有整个值完全匹配这个形式时才会解析环境变量。
 - 解析顺序是进程环境优先，再读取同目录 `.env`。缺失或空值使整个控制面候选无效。
 - `.env` 支持注释、`export`、单双引号，不做变量插值；文件必须是非符号链接的普通 UTF-8 文件，最大 64 KiB。
 - 首次启动只创建 `MINECLAW_API_KEY=` 空占位，并在 POSIX 文件系统尽力设置 `0600`。
+
+两个协议可以在同一目录中并存，例如：
+
+```yaml
+providers:
+  primary-chat:
+    api:
+      type: openai_chat_completions
+      base_url: https://api.example.com/v1
+      api_key: ${MINECLAW_API_KEY}
+    transport: {timeout_ms: 60000, retry: {max_retries: 2, backoff_ms: 500}}
+    tools: []
+  primary-responses:
+    api:
+      type: openai_responses
+      base_url: https://api.example.com/v1
+      api_key: ${MINECLAW_API_KEY}
+    transport: {timeout_ms: 60000, retry: {max_retries: 2, backoff_ms: 500}}
+    tools: []
+```
+
+对应模型名仍须使用准确的 `primary-chat/model` 与 `primary-responses/model` 前缀。不要把 endpoint 放进 `base_url`，也不要假定声明支持 OpenAI-compatible 的上游同时实现了两个协议。
+
+### 协议线格式与回放
+
+`openai_chat_completions` 向 `/chat/completions` 发送 `messages`，本地 Function Tool 使用嵌套的 `type: function` + `function: {name, description, parameters}` Schema，并解析 Chat Completions 的 SSE chunk。配置了 `interleaved.field: reasoning_content` 时，Mineclaw 还会保存并按该字段回传交错 reasoning。
+
+`openai_responses` 向 `/responses` 发送 `input` item 数组。运行时会把本地 Function Tool 投影为 Responses 要求的扁平 `type: function` + 顶层 `name`、`description`、`parameters`。流式响应按 typed SSE event 处理：`response.output_text.delta` 与 `response.refusal.delta` 驱动可见文本增量；若 `response.completed` / `response.incomplete` 带完整 `output`，它是 reasoning、function call、arguments、完成状态和 usage 的最终权威；兼容上游若在 terminal event 中只返回元数据，Mineclaw 会从此前的 output-item、文本、refusal 和 function-arguments events 组装同一结果。`response.failed` 与 typed `error` 进入失败路径。Responses 请求始终显式发送 `store: false`，不使用 `previous_response_id`、`conversation` 或 Provider 侧持久会话来续接。
+
+Mineclaw 在 Responses 请求中加入 `include: [reasoning.encrypted_content]`，并在本地完整保存已经发布的 input/output items，包括玩家与 assistant message、带 opaque/encrypted content 的 reasoning、`function_call` 和匹配 `call_id` 的 `function_call_output`。后续请求按官方 input-item 规则回放：assistant output message 归一为 portable easy input message，reasoning 与 function item 保持 typed 形状，同时剥离 `created_by` 等只读输出元数据，并跳过不能保持原语义的失败 output item；本地归档仍保留原始对象。因此 Tool 往返和多轮上下文不依赖 Provider 保存上一条 response；`store: false` 也不代表 Provider 自身没有独立的数据留存政策。
 
 ### Transport
 
@@ -139,7 +170,7 @@ models:
 
 ### Provider 原生 Tool
 
-`providers.*.tools` 中的 `payload` 会按 Provider 协议原样加入 Chat Completions `tools`，Mineclaw 不校验或改写其内部字段。`id` 只用于目录身份和诊断，不进入 payload。Provider 是否支持该 Tool 及其字段由上游 API 校验。
+`providers.*.tools` 中的 `payload` 会按所选 Provider 协议原样加入请求的 `tools`，Mineclaw 不校验、改写或在协议间转换其内部字段。`id` 只用于目录身份和诊断，不进入 payload。Chat Completions payload 必须使用该上游接受的 Chat Tool 形状；Responses payload 必须已经使用该上游接受的 Responses Tool 形状。尤其是 Function 类 payload，前者通常嵌套在 `function` 对象内，后者使用扁平字段。
 
 每个 entry 的外层只允许 `id` 与 `payload`，`payload` 必须是 JSON object。本地 Tool 仍在 `tools.yml` 中独立配置；Provider payload 即使使用 `type: function` 也只会透传给上游，不会注册到本地 ToolDispatcher。
 
@@ -153,9 +184,9 @@ models:
 
 ### 请求扩展
 
-- `interleaved.field` 当前只支持 `reasoning_content`，用于把 Provider 的交错推理内容按协议回传。
+- `interleaved.field` 只适用于 `openai_chat_completions`，当前唯一值为 `reasoning_content`。Responses 的 reasoning 使用 typed output/input items 完整回放；Responses 模型条目出现 `interleaved` 会使控制面校验失败。
 - `request.prompt_cache_key: true` 会在普通与压缩请求 Body 顶层加入 `mineclaw:<UUID>`；UUID 在公共 Session 内稳定，`/mineclaw clear` 后轮换。`false` 或省略时完全不发送。
-- `request.extra_body` 合并到请求 Body 顶层。`model`、`messages`、`tools`、`tool_choice`、`stream`、`stream_options`、token 字段与 `prompt_cache_key` 等 Mineclaw 管理字段不可覆盖。
+- `request.extra_body` 合并到请求 Body 顶层。两种协议的运行时管理字段都不可覆盖，包括 `model`、`messages`、`input`、`instructions`、`tools`、`tool_choice`、`stream`、`stream_options`、token 字段、`prompt_cache_key`、`store`、`background`、`previous_response_id`、`conversation` 与 `include`。Responses 的 `store: false` 和 `include: [reasoning.encrypted_content]` 不可由配置改写。
 
 ## `whitelist.yml` Schema 1
 

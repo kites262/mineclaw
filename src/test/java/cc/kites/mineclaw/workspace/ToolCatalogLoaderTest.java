@@ -53,6 +53,16 @@ class ToolCatalogLoaderTest {
                 assertThat(tool.registeredHandler()).contains(ToolDefinition.Handler.CALL_FUNCTION));
         JsonArray wire = catalog.toChatCompletionsTools();
         assertThat(wire).hasSize(9);
+        JsonArray responsesWire = catalog.toResponsesTools();
+        assertThat(responsesWire).hasSize(9);
+        assertThat(responsesWire.get(0).getAsJsonObject().has("function")).isFalse();
+        assertThat(responsesWire.get(0).getAsJsonObject().get("type").getAsString())
+                .isEqualTo("function");
+        assertThat(responsesWire.get(0).getAsJsonObject().get("name").getAsString())
+                .isEqualTo("player_snapshot");
+        assertThat(responsesWire.get(0).getAsJsonObject().getAsJsonObject("parameters"))
+                .isEqualTo(wire.get(0).getAsJsonObject().getAsJsonObject("function")
+                        .getAsJsonObject("parameters"));
         assertThat(FunctionCatalogLoader.nativeCapabilityAllowlist(catalog))
                 .contains("item_inspect", "read")
                 .doesNotContain("call_function", "mimo_web_search");

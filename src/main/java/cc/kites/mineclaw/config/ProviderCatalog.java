@@ -71,16 +71,23 @@ public final class ProviderCatalog {
     }
 
     public enum ApiType {
-        OPENAI_CHAT_COMPLETIONS("openai_chat_completions");
+        OPENAI_CHAT_COMPLETIONS("openai_chat_completions", "/chat/completions"),
+        OPENAI_RESPONSES("openai_responses", "/responses");
 
         private final String wireName;
+        private final String endpointPath;
 
-        ApiType(String wireName) {
+        ApiType(String wireName, String endpointPath) {
             this.wireName = wireName;
+            this.endpointPath = endpointPath;
         }
 
         public String wireName() {
             return wireName;
+        }
+
+        String endpointPath() {
+            return endpointPath;
         }
 
         public static Optional<ApiType> fromWireName(String name) {
@@ -105,7 +112,7 @@ public final class ProviderCatalog {
         }
 
         public URI endpoint() {
-            return URI.create(baseUrl.toString() + "/chat/completions");
+            return URI.create(baseUrl.toString() + type.endpointPath());
         }
 
         @Override

@@ -2,6 +2,22 @@
 
 Mineclaw 使用语义化版本。v1.0.0 是重新设计的第一个稳定大版本，与全部 v0.x 配置不兼容。
 
+## 1.4.0 — 2026-08-27
+
+### Provider 协议
+
+- 新增 `openai_responses` API type，与原有 `openai_chat_completions` 按 Provider 并存；运行时分别从 API 根地址派生 `/responses` 与 `/chat/completions` endpoint，并拒绝在 `base_url` 中直接写入任一具体 endpoint。
+- Responses 请求使用 `input` items、扁平 Function Tool Schema 和 typed SSE events；Chat Completions 继续使用 `messages`、嵌套 `function` Schema 和原有 SSE chunk。
+- 本地 Tool 会自动投影到所选协议。Provider 原生 Tool payload 仍为不透明 JSON object，不在协议之间转换，必须由配置作者提供与上游协议匹配的形状。
+- Responses 请求显式设置 `store: false`，不依赖 `previous_response_id` 或 Provider 会话；已发布 Turn 的 message、reasoning、`function_call` 与 `function_call_output` items 在本地无损保存并于后续请求完整回放。
+- `interleaved.reasoning_content` 继续仅适用于 Chat Completions；Responses reasoning 使用 typed items，配置 `interleaved` 会被严格校验拒绝。
+
+### 兼容性与运维
+
+- Responses 不发送其官方 input message Schema 未定义的 `name` 字段；启用玩家 name 身份时自动改用已转义的正文身份信封。回放前剥离 `created_by` 等只读输出字段，并跳过官方定义为不可安全回放的失败 output item。
+- Responses parser 同时覆盖 `output_text` 与 `refusal` 的普通响应和 typed SSE 增量，兼容 terminal event 仅返回元数据的实现。
+- 扩展配置、扩展、安全与运维文档，要求分别验证两种协议的 endpoint、请求容器、Function Schema、SSE、Provider Tool、Tool 往返、多轮回放和压缩路径。
+
 ## 1.3.0 — 2026-08-10
 
 ### Provider Tool

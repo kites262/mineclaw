@@ -43,4 +43,10 @@ public record ToolCatalog(List<ToolDefinition> definitions, List<String> diagnos
         enabledDefinitions().forEach(tool -> result.add(tool.toChatCompletionsTool()));
         return result;
     }
+
+    public JsonArray toResponsesTools() {
+        JsonArray result = new JsonArray();
+        enabledDefinitions().forEach(tool -> result.add(tool.toResponsesTool()));
+        return result;
+    }
 }

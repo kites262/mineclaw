@@ -82,6 +82,51 @@ class ContextCompactorTest {
     }
 
     @Test
+    void routesCompactionThroughResponsesWithoutExposingTools() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        var executor = Executors.newVirtualThreadPerTaskExecutor();
+        server.setExecutor(executor);
+        AtomicReference<JsonObject> body = new AtomicReference<>();
+        server.createContext("/v1/responses", exchange -> {
+            body.set(JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.UTF_8)).getAsJsonObject());
+            byte[] response = """
+                    {"object":"response","status":"completed","output":[
+                     {"type":"message","role":"assistant","status":"completed","content":[
+                     {"type":"output_text","text":"goal: keep the response result"}]}],
+                     "usage":{"input_tokens":90,"output_tokens":8,"total_tokens":98}}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            URI base = URI.create("http://" + server.getAddress().getHostString() + ':'
+                    + server.getAddress().getPort() + "/v1");
+            ProviderCatalog.Provider provider = new ProviderCatalog.Provider("test",
+                    new ProviderCatalog.Api(ProviderCatalog.ApiType.OPENAI_RESPONSES, base, "secret"),
+                    new ProviderCatalog.Transport(Duration.ofSeconds(5), 0, Duration.ZERO), List.of());
+            ProviderCatalog.Model model = new ProviderCatalog.Model("test/model", "test", "model",
+                    new ProviderCatalog.Limits(4096, 512), Optional.empty(), new JsonObject());
+
+            ContextCompactor.Outcome result = new ContextCompactor(new ChatCompletionsClient())
+                    .compact(model, provider, "", List.of(List.of(ApiMessage.user("history"))), 256)
+                    .join();
+
+            assertThat(result.summary()).isEqualTo("goal: keep the response result");
+            assertThat(body.get().has("messages")).isFalse();
+            assertThat(body.get().has("tools")).isFalse();
+            assertThat(body.get().get("store").getAsBoolean()).isFalse();
+            assertThat(body.get().getAsJsonArray("input")).hasSize(2);
+        } finally {
+            server.stop(0);
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void summaryIsMarkedAsMineclawHistoricalDataForNormalRequests() {
         assertThat(ContextCompactor.withSummary("base", "important fact"))
                 .contains(ContextCompactor.SUMMARY_SECTION, "JSON string", "important fact",

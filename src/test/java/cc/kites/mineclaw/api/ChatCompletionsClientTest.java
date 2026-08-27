@@ -466,6 +466,160 @@ class ChatCompletionsClientTest {
     }
 
     @Test
+    void sendsResponsesItemsAndPreservesProtocolReadyToolPayloads() {
+        AtomicReference<JsonObject> requestBody = new AtomicReference<>();
+        server.createContext("/v1/responses", exchange -> {
+            requestBody.set(JsonParser.parseString(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
+            respond(exchange, 200, """
+                    {"id":"resp_1","object":"response","status":"completed",
+                     "output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant",
+                     "content":[{"type":"output_text","text":"完成","annotations":[]}]}],
+                     "usage":{"input_tokens":18,"output_tokens":2,"total_tokens":20}}
+                    """);
+        });
+        JsonObject localTool = JsonParser.parseString("""
+                {"type":"function","name":"look","description":"look",
+                 "parameters":{"type":"object","properties":{},"additionalProperties":false}}
+                """).getAsJsonObject();
+        JsonObject providerTool = JsonParser.parseString("""
+                {"type":"function","function":{"vendor_nested":true},"vendor_option":"opaque"}
+                """).getAsJsonObject();
+        JsonObject extra = JsonParser.parseString("{\"reasoning\":{\"effort\":\"low\"}}")
+                .getAsJsonObject();
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                responsesEndpoint(), "test/model", "upstream-model", "system rules",
+                List.of(ApiMessage.user("Alice", "看哪里"),
+                        ApiMessage.assistantToolCalls(List.of(new ToolCall("call_old", "look", "{}"))),
+                        ApiMessage.tool("call_old", "{\"status\":\"ok\"}")),
+                List.of(localTool, providerTool), Duration.ofSeconds(2), 0, Duration.ZERO,
+                1024, extra, Optional.empty(), Optional.empty(), false, true, false,
+                ChatCompletionRequest.Protocol.RESPONSES);
+
+        ChatCompletionResult result = client().complete(request, "test-secret", IGNORE_STREAM).join();
+
+        assertThat(result.content()).isEqualTo("完成");
+        assertThat(result.finishReason()).isEqualTo("stop");
+        assertThat(result.usage()).isEqualTo(new ApiUsage(18, 2, 20));
+        assertThat(result.responseOutputItems()).singleElement().satisfies(item ->
+                assertThat(item.get("id").getAsString()).isEqualTo("msg_1"));
+
+        JsonObject sent = requestBody.get();
+        assertThat(sent.get("model").getAsString()).isEqualTo("upstream-model");
+        assertThat(sent.get("stream").getAsBoolean()).isTrue();
+        assertThat(sent.get("store").getAsBoolean()).isFalse();
+        assertThat(sent.get("max_output_tokens").getAsInt()).isEqualTo(1024);
+        assertThat(sent.getAsJsonArray("include")).containsExactly(
+                new com.google.gson.JsonPrimitive("reasoning.encrypted_content"));
+        assertThat(sent.has("messages")).isFalse();
+        assertThat(sent.has("instructions")).isFalse();
+        assertThat(sent.has("stream_options")).isFalse();
+        assertThat(sent.has("max_completion_tokens")).isFalse();
+        JsonArray input = sent.getAsJsonArray("input");
+        assertThat(input).hasSize(4);
+        assertThat(input.get(0).getAsJsonObject().get("role").getAsString()).isEqualTo("system");
+        assertThat(input.get(1).getAsJsonObject().has("name")).isFalse();
+        assertThat(input.get(1).getAsJsonObject().get("content").getAsString())
+                .isEqualTo("<player>Alice</player>\n<message>看哪里</message>");
+        assertThat(input.get(2).getAsJsonObject().get("type").getAsString())
+                .isEqualTo("function_call");
+        assertThat(input.get(2).getAsJsonObject().get("call_id").getAsString())
+                .isEqualTo("call_old");
+        assertThat(input.get(3).getAsJsonObject().get("type").getAsString())
+                .isEqualTo("function_call_output");
+        assertThat(input.get(3).getAsJsonObject().get("call_id").getAsString())
+                .isEqualTo("call_old");
+        JsonArray sentTools = sent.getAsJsonArray("tools");
+        assertThat(sentTools.get(0).getAsJsonObject().has("function")).isFalse();
+        assertThat(sentTools.get(0).getAsJsonObject().get("name").getAsString()).isEqualTo("look");
+        assertThat(sentTools.get(1).getAsJsonObject()).isEqualTo(providerTool);
+    }
+
+    @Test
+    void replaysResponsesOutputItemsBeforeTheMatchingFunctionOutput() {
+        AtomicReference<JsonObject> requestBody = new AtomicReference<>();
+        server.createContext("/v1/responses", exchange -> {
+            requestBody.set(JsonParser.parseString(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
+            respond(exchange, 200, """
+                    {"object":"response","status":"completed","output":[
+                     {"type":"message","role":"assistant","status":"completed","content":[
+                     {"type":"output_text","text":"done"}]}]}
+                    """);
+        });
+        JsonObject reasoning = JsonParser.parseString("""
+                {"id":"rs_1","type":"reasoning","encrypted_content":"opaque","summary":[],
+                 "created_by":"server-only"}
+                """).getAsJsonObject();
+        JsonObject functionCall = JsonParser.parseString("""
+                {"id":"fc_1","type":"function_call","call_id":"call_1",
+                 "name":"look","arguments":"{}","status":"completed",
+                 "created_by":"server-only"}
+                """).getAsJsonObject();
+        JsonObject outputMessage = JsonParser.parseString("""
+                {"id":"msg_1","type":"message","role":"assistant","status":"completed",
+                 "content":[{"type":"output_text","text":"I will look."}],
+                 "created_by":"server-only"}
+                """).getAsJsonObject();
+        JsonObject unsafeOutput = JsonParser.parseString("""
+                {"type":"custom_tool_call_output","call_id":"custom_1","output":"partial",
+                 "status":"in_progress","created_by":"server-only"}
+                """).getAsJsonObject();
+        ApiMessage assistant = new ApiMessage("assistant", null,
+                List.of(new ToolCall("call_1", "look", "{}")), null, Map.of(), null,
+                List.of(unsafeOutput, reasoning, outputMessage, functionCall));
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                responsesEndpoint(), "test/model", "model", "system",
+                List.of(assistant, ApiMessage.tool("call_1", "{\"ok\":true}")), List.of(),
+                Duration.ofSeconds(2), 0, Duration.ZERO, 128, new JsonObject(),
+                Optional.empty(), Optional.empty(), false, true, true,
+                ChatCompletionRequest.Protocol.RESPONSES);
+
+        client().complete(request, "secret", IGNORE_STREAM).join();
+
+        JsonArray input = requestBody.get().getAsJsonArray("input");
+        assertThat(input).hasSize(5);
+        assertThat(input.get(1).getAsJsonObject().has("created_by")).isFalse();
+        assertThat(input.get(1).getAsJsonObject().get("encrypted_content").getAsString())
+                .isEqualTo("opaque");
+        assertThat(input.get(2).getAsJsonObject().entrySet())
+                .extracting(java.util.Map.Entry::getKey)
+                .containsExactlyInAnyOrder("role", "content");
+        assertThat(input.get(2).getAsJsonObject().get("role").getAsString())
+                .isEqualTo("assistant");
+        assertThat(input.get(2).getAsJsonObject().get("content").getAsString())
+                .isEqualTo("I will look.");
+        assertThat(input.get(3).getAsJsonObject().has("created_by")).isFalse();
+        assertThat(input.get(3).getAsJsonObject().get("call_id").getAsString())
+                .isEqualTo("call_1");
+        assertThat(input.get(4).getAsJsonObject().get("call_id").getAsString())
+                .isEqualTo("call_1");
+        assertThat(reasoning.has("created_by")).isTrue();
+        assertThat(outputMessage.has("created_by")).isTrue();
+        assertThat(functionCall.has("created_by")).isTrue();
+        assertThat(unsafeOutput.has("created_by")).isTrue();
+    }
+
+    @Test
+    void labelsResponsesHttpFailuresWithoutExposingTheCredential() {
+        server.createContext("/v1/responses", exchange ->
+                respond(exchange, 400, "{\"error\":{\"type\":\"invalid_request\"}}"));
+        ChatCompletionRequest request = new ChatCompletionRequest(
+                responsesEndpoint(), "test/model", "model", "system", List.of(), List.of(),
+                Duration.ofSeconds(2), 0, Duration.ZERO, 128, new JsonObject(),
+                Optional.empty(), Optional.empty(), false, true, false,
+                ChatCompletionRequest.Protocol.RESPONSES);
+
+        Throwable cause = org.assertj.core.api.Assertions.catchThrowable(() ->
+                client().complete(request, "never-print-this", IGNORE_STREAM).join());
+
+        assertThat(cause).isInstanceOf(CompletionException.class);
+        assertThat(cause.getCause()).isInstanceOf(ChatCompletionException.class)
+                .hasMessageContaining("Responses request failed with HTTP 400")
+                .hasMessageNotContaining("never-print-this");
+    }
+
+    @Test
     void retries429AndServerErrorsWithInitialPlusMaxRetriesAttempts() {
         AtomicInteger attempts = new AtomicInteger();
         server.createContext("/v1/chat/completions", exchange -> {
@@ -635,6 +789,11 @@ class ChatCompletionsClientTest {
     private URI endpoint() {
         return URI.create("http://" + server.getAddress().getHostString() + ':' + server.getAddress().getPort()
                 + "/v1/chat/completions");
+    }
+
+    private URI responsesEndpoint() {
+        return URI.create("http://" + server.getAddress().getHostString() + ':' + server.getAddress().getPort()
+                + "/v1/responses");
     }
 
     private static String ordinaryResponse(String content) {

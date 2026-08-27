@@ -3,6 +3,7 @@ package cc.kites.mineclaw.turn;
 import cc.kites.mineclaw.api.ApiMessage;
 import cc.kites.mineclaw.api.ApiUsage;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -54,5 +55,24 @@ class ContextTokenEstimatorTest {
         assertThat(nameOnly).isGreaterThan(neither);
         assertThat(envelopeOnly).isGreaterThan(neither);
         assertThat(both).isGreaterThan(nameOnly).isGreaterThan(envelopeOnly);
+    }
+
+    @Test
+    void rawResponsesItemsReplaceRatherThanDuplicateTheNormalizedFrameEstimate() {
+        JsonObject raw = JsonParser.parseString("""
+                {"type":"message","role":"assistant","content":[
+                 {"type":"output_text","text":"same visible answer"}]}
+                """).getAsJsonObject();
+        ApiMessage normalizedOnly = ApiMessage.assistant("same visible answer");
+        ApiMessage withReplay = new ApiMessage("assistant", "same visible answer", List.of(),
+                null, java.util.Map.of(), null, List.of(raw));
+
+        int normalized = ContextTokenEstimator.messageEstimate(List.of(normalizedOnly));
+        int rawOnly = ContextTokenEstimator.messageEstimate(List.of(
+                new ApiMessage("assistant", null, List.of(), null,
+                        java.util.Map.of(), null, List.of(raw))));
+        int combined = ContextTokenEstimator.messageEstimate(List.of(withReplay));
+
+        assertThat(combined).isEqualTo(Math.max(normalized, rawOnly));
     }
 }

@@ -2,6 +2,7 @@ package cc.kites.mineclaw.api;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -27,7 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
-/** Asynchronous OpenAI-compatible Chat Completions streaming client. */
+/** Asynchronous OpenAI-compatible Chat Completions and Responses streaming client. */
 public final class ChatCompletionsClient {
     private static final Gson GSON = new Gson();
     private static final int MAX_ERROR_BODY_BYTES = 16 * 1024;
@@ -91,7 +92,7 @@ public final class ChatCompletionsClient {
         CompletableFuture<HttpResponse<Flow.Publisher<List<ByteBuffer>>>> responseFuture = httpClient.sendAsync(
                 httpRequest, HttpResponse.BodyHandlers.ofPublisher());
         CompletableFuture<ChatCompletionResult> pipeline = responseFuture.thenCompose(response ->
-                consumeResponse(response, deltaConsumer, subscription, request.interleavedField()));
+                consumeResponse(response, deltaConsumer, subscription, request));
         return withTimeout(pipeline, responseFuture, subscription, request.timeout());
     }
 
@@ -99,11 +100,17 @@ public final class ChatCompletionsClient {
             HttpResponse<Flow.Publisher<List<ByteBuffer>>> response,
             Consumer<String> deltaConsumer,
             AtomicReference<Flow.Subscription> subscription,
-            java.util.Optional<String> interleavedField
+            ChatCompletionRequest request
     ) {
         int statusCode = response.statusCode();
         if (statusCode >= 200 && statusCode < 300) {
-            ChatResponseParser parser = new ChatResponseParser(deltaConsumer, interleavedField);
+            if (request.protocol() == ChatCompletionRequest.Protocol.RESPONSES) {
+                ResponsesResponseParser parser = new ResponsesResponseParser(deltaConsumer);
+                BodySubscriber subscriber = new BodySubscriber(subscription, parser::accept);
+                response.body().subscribe(subscriber);
+                return subscriber.body().thenApply(ignored -> parser.finish());
+            }
+            ChatResponseParser parser = new ChatResponseParser(deltaConsumer, request.interleavedField());
             BodySubscriber subscriber = new BodySubscriber(subscription, parser::accept);
             response.body().subscribe(subscriber);
             return subscriber.body().thenApply(ignored -> parser.finish());
@@ -125,7 +132,8 @@ public final class ChatCompletionsClient {
         return subscriber.body().thenCompose(ignored -> CompletableFuture.failedFuture(
                 ChatResponseParser.errorResponse(statusCode,
                         errorBody.toString(StandardCharsets.UTF_8), requestId(response),
-                        errorBodyTruncated.get())));
+                        errorBodyTruncated.get(), request.protocol() == ChatCompletionRequest.Protocol.RESPONSES
+                                ? "Responses" : "Chat Completions")));
     }
 
     private static String requestId(HttpResponse<?> response) {
@@ -168,6 +176,13 @@ public final class ChatCompletionsClient {
     }
 
     private static String requestBody(ChatCompletionRequest request) {
+        return switch (request.protocol()) {
+            case CHAT_COMPLETIONS -> chatCompletionsRequestBody(request);
+            case RESPONSES -> responsesRequestBody(request);
+        };
+    }
+
+    private static String chatCompletionsRequestBody(ChatCompletionRequest request) {
         JsonObject root = new JsonObject();
         root.addProperty("model", request.model());
         request.promptCacheKey().ifPresent(value -> root.addProperty("prompt_cache_key", value));
@@ -199,27 +214,203 @@ public final class ChatCompletionsClient {
         return GSON.toJson(root);
     }
 
-    static String debugRequestBody(String body) {
-        JsonObject root = JsonParser.parseString(Objects.requireNonNull(body, "body")).getAsJsonObject();
-        JsonArray messages = root.getAsJsonArray("messages");
-        if (messages != null) {
-            for (var element : messages) {
-                if (!element.isJsonObject()) {
-                    continue;
+    private static String responsesRequestBody(ChatCompletionRequest request) {
+        JsonObject root = new JsonObject();
+        root.addProperty("model", request.model());
+        request.promptCacheKey().ifPresent(value -> root.addProperty("prompt_cache_key", value));
+        root.addProperty("stream", true);
+        root.addProperty("store", false);
+        if (request.maxOutputTokens() > 0) {
+            root.addProperty("max_output_tokens", request.maxOutputTokens());
+        }
+        JsonArray include = new JsonArray();
+        include.add("reasoning.encrypted_content");
+        root.add("include", include);
+
+        JsonArray input = new JsonArray();
+        input.add(responseMessage("system", request.systemPrompt(), null));
+        request.messages().forEach(message -> appendResponseItems(input, message,
+                request.includeMessageNames(), request.includePlayerContentPrefix()));
+        root.add("input", input);
+
+        if (!request.tools().isEmpty()) {
+            JsonArray tools = new JsonArray();
+            request.tools().forEach(tool -> tools.add(tool.deepCopy()));
+            root.add("tools", tools);
+        }
+        request.extraBody().entrySet().forEach(entry -> root.add(entry.getKey(), entry.getValue().deepCopy()));
+        return GSON.toJson(root);
+    }
+
+    private static void appendResponseItems(JsonArray input, ApiMessage message,
+                                            boolean includeName, boolean includePlayerPrefix) {
+        if (message.role().equals("assistant") && !message.responseItems().isEmpty()) {
+            for (JsonObject outputItem : message.responseItems()) {
+                JsonObject inputItem = responseInputItem(outputItem);
+                if (inputItem != null) {
+                    input.add(inputItem);
                 }
-                JsonObject message = element.getAsJsonObject();
-                for (var entry : message.entrySet()) {
-                    String field = entry.getKey();
-                    if ((field.equals("content") || field.endsWith("_content"))
-                            && entry.getValue().isJsonPrimitive()
-                            && entry.getValue().getAsJsonPrimitive().isString()) {
-                        entry.setValue(new com.google.gson.JsonPrimitive(
-                                truncateDebugMessage(entry.getValue().getAsString())));
+            }
+            return;
+        }
+        if (message.role().equals("tool")) {
+            JsonObject output = new JsonObject();
+            output.addProperty("type", "function_call_output");
+            output.addProperty("call_id", message.toolCallId());
+            output.addProperty("output", message.content());
+            input.add(output);
+            return;
+        }
+        if (message.content() != null) {
+            // Responses EasyInputMessage has no name field. Preserve the configured player
+            // attribution intent with Mineclaw's escaped content envelope instead.
+            input.add(responseMessage(message.role(),
+                    message.modelContent(includeName || includePlayerPrefix), null));
+        }
+        if (message.role().equals("assistant")) {
+            message.toolCalls().stream().map(ChatCompletionsClient::responseFunctionCall).forEach(input::add);
+        }
+    }
+
+    /** Converts stored output items into replay-safe Responses input items. */
+    private static JsonObject responseInputItem(JsonObject outputItem) {
+        JsonObject inputItem = outputItem.deepCopy();
+        inputItem.remove("created_by");
+        String type = string(inputItem, "type");
+        if (type.equals("message")) {
+            return responseInputMessage(inputItem);
+        }
+        if (type.equals("additional_tools") && !string(inputItem, "role").equals("developer")) {
+            return null;
+        }
+        if (type.equals("computer_call_output") && string(inputItem, "status").equals("failed")) {
+            return null;
+        }
+        if (type.equals("custom_tool_call_output")) {
+            String status = string(inputItem, "status");
+            if (!status.isEmpty() && !status.equals("completed")) {
+                return null;
+            }
+            inputItem.remove("status");
+        }
+        if (type.equals("shell_call_output")) {
+            JsonElement output = inputItem.get("output");
+            if (output != null && output.isJsonArray()) {
+                for (JsonElement chunk : output.getAsJsonArray()) {
+                    if (chunk.isJsonObject()) {
+                        chunk.getAsJsonObject().remove("created_by");
                     }
                 }
             }
         }
+        return inputItem;
+    }
+
+    /** Uses the portable EasyInputMessage shape accepted by strict and compatible endpoints. */
+    private static JsonObject responseInputMessage(JsonObject outputMessage) {
+        String content;
+        JsonElement value = outputMessage.get("content");
+        if (value != null && value.isJsonPrimitive()
+                && value.getAsJsonPrimitive().isString()) {
+            content = value.getAsString();
+        } else if (value != null && value.isJsonArray()) {
+            StringBuilder visible = new StringBuilder();
+            for (JsonElement element : value.getAsJsonArray()) {
+                if (!element.isJsonObject()) {
+                    continue;
+                }
+                JsonObject part = element.getAsJsonObject();
+                String partType = string(part, "type");
+                if (partType.equals("output_text")) {
+                    visible.append(string(part, "text"));
+                } else if (partType.equals("refusal")) {
+                    visible.append(string(part, "refusal"));
+                }
+            }
+            content = visible.toString();
+        } else {
+            content = "";
+        }
+        if (content.isEmpty()) {
+            return null;
+        }
+        JsonObject result = new JsonObject();
+        String role = string(outputMessage, "role");
+        result.addProperty("role", role.isEmpty() ? "assistant" : role);
+        result.addProperty("content", content);
+        return result;
+    }
+
+    private static JsonObject responseMessage(String role, String content, String name) {
+        JsonObject result = new JsonObject();
+        result.addProperty("role", role);
+        if (content == null) {
+            result.add("content", JsonNull.INSTANCE);
+        } else {
+            result.addProperty("content", content);
+        }
+        if (name != null) {
+            result.addProperty("name", name);
+        }
+        return result;
+    }
+
+    private static JsonObject responseFunctionCall(ToolCall call) {
+        JsonObject result = new JsonObject();
+        result.addProperty("type", "function_call");
+        result.addProperty("call_id", call.id());
+        result.addProperty("name", call.name());
+        result.addProperty("arguments", call.arguments());
+        return result;
+    }
+
+    static String debugRequestBody(String body) {
+        JsonObject root = JsonParser.parseString(Objects.requireNonNull(body, "body")).getAsJsonObject();
+        JsonArray messages = root.getAsJsonArray("messages");
+        if (messages != null) {
+            messages.forEach(ChatCompletionsClient::truncateDebugContextItem);
+        }
+        JsonArray input = root.getAsJsonArray("input");
+        if (input != null) {
+            input.forEach(ChatCompletionsClient::truncateDebugContextItem);
+        }
         return GSON.toJson(root);
+    }
+
+    private static void truncateDebugContextItem(JsonElement element) {
+        if (!element.isJsonObject()) {
+            return;
+        }
+        JsonObject item = element.getAsJsonObject();
+        for (var entry : item.entrySet()) {
+            String field = entry.getKey();
+            JsonElement value = entry.getValue();
+            if ((field.equals("content") || field.endsWith("_content")
+                    || field.equals("output") && "function_call_output".equals(string(item, "type")))
+                    && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+                entry.setValue(new com.google.gson.JsonPrimitive(
+                        truncateDebugMessage(value.getAsString())));
+            } else if (field.equals("content") && value.isJsonArray()) {
+                for (JsonElement part : value.getAsJsonArray()) {
+                    if (part.isJsonObject()) {
+                        truncateStringField(part.getAsJsonObject(), "text");
+                        truncateStringField(part.getAsJsonObject(), "refusal");
+                    }
+                }
+            }
+        }
+    }
+
+    private static void truncateStringField(JsonObject object, String field) {
+        JsonElement value = object.get(field);
+        if (value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+            object.addProperty(field, truncateDebugMessage(value.getAsString()));
+        }
+    }
+
+    private static String string(JsonObject object, String field) {
+        JsonElement value = object.get(field);
+        return value != null && value.isJsonPrimitive() ? value.getAsString() : "";
     }
 
     private static String truncateDebugMessage(String value) {
@@ -281,9 +472,9 @@ public final class ChatCompletionsClient {
             return failure;
         }
         if (failure instanceof IOException || failure instanceof TimeoutException) {
-            return new ChatCompletionException("Chat Completions transport failed", -1, true, failure);
+            return new ChatCompletionException("Provider API transport failed", -1, true, failure);
         }
-        return new ChatCompletionException("Chat Completions request failed", -1, false, failure);
+        return new ChatCompletionException("Provider API request failed", -1, false, failure);
     }
 
     private static Throwable unwrap(Throwable failure) {
@@ -376,7 +567,7 @@ public final class ChatCompletionsClient {
                 }, body);
             } catch (RuntimeException exception) {
                 result.completeExceptionally(new ChatCompletionException(
-                        "Chat Completions request could not be started", -1, false, exception));
+                        "Provider API request could not be started", -1, false, exception));
                 return;
             }
             current.set(transport);
@@ -436,7 +627,8 @@ public final class ChatCompletionsClient {
                 return;
             }
             try {
-                debugLogger.accept("[Mineclaw debug] Chat Completions request attempt="
+                debugLogger.accept("[Mineclaw debug] Provider API request protocol="
+                        + request.protocol().name().toLowerCase(java.util.Locale.ROOT) + " attempt="
                         + attemptNumber + " model=" + request.modelReference() + " body=" + debugBody);
             } catch (RuntimeException ignored) {
                 // Debug output must never alter transport behavior.

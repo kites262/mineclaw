@@ -1,6 +1,7 @@
 package cc.kites.mineclaw.turn;
 
 import cc.kites.mineclaw.config.MineclawConfig;
+import cc.kites.mineclaw.config.ProviderCatalog;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +49,32 @@ class TurnCoordinatorIdentityTest {
                 .contains("no current or replayed historical user message has trusted player attribution",
                         "Do not infer an author")
                 .doesNotContain("user.name", "<player>/<message>");
+    }
+
+    @Test
+    void responsesProjectsConfiguredNameAttributionToThePortableEnvelope() {
+        MineclawConfig.Identity projected = TurnCoordinator.identityProjection(
+                identity(true, false), ProviderCatalog.ApiType.OPENAI_RESPONSES);
+
+        assertThat(projected.includePlayerNameField()).isFalse();
+        assertThat(projected.includePlayerContentPrefix()).isTrue();
+        assertThat(TurnCoordinator.identityProtocol(projected))
+                .contains("leading escaped", "envelope authoritatively identifies")
+                .doesNotContain("user.name");
+    }
+
+    @Test
+    void chatKeepsConfiguredIdentityProjectionAndResponsesKeepsOptOut() {
+        MineclawConfig.Identity configured = identity(true, false);
+
+        assertThat(TurnCoordinator.identityProjection(
+                configured, ProviderCatalog.ApiType.OPENAI_CHAT_COMPLETIONS))
+                .isSameAs(configured);
+        assertThat(TurnCoordinator.identityProjection(
+                identity(false, false), ProviderCatalog.ApiType.OPENAI_RESPONSES))
+                .extracting(MineclawConfig.Identity::includePlayerNameField,
+                        MineclawConfig.Identity::includePlayerContentPrefix)
+                .containsExactly(false, false);
     }
 
     private static MineclawConfig.Identity identity(boolean nameField, boolean contentPrefix) {

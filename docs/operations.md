@@ -1,20 +1,20 @@
 # 运维手册
 
-本文覆盖 Mineclaw 1.3.0 的安装、迁移、日常管理、诊断、构建和发布检查。
+本文覆盖 Mineclaw 1.4.0 的安装、迁移、日常管理、诊断、构建和发布检查。
 
 ## 运行要求
 
 - Paper 26.2 或 Folia 26.2
 - Java 25
-- 可访问的 OpenAI-compatible Chat Completions endpoint
-- Tool 模式需要上游正确支持 streaming 和 tool calls
+- 可访问的 OpenAI-compatible Chat Completions 或 Responses API 根地址
+- Tool 模式需要上游正确支持所选协议的 streaming、typed event/chunk 和 tool calls
 
 `26.2 + Java 25` 是当前精确目标，不是“最低版本”声明。独立 Spigot/Bukkit 和其他版本不在兼容承诺内。
 
 ## 全新安装
 
 1. 停止服务端。
-2. 把 `Mineclaw-1.3.0.jar` 放入 `plugins/`。
+2. 把 `Mineclaw-1.4.0.jar` 放入 `plugins/`。
 3. 启动一次，使插件生成 `plugins/Mineclaw/`，再停止服务端。
 4. 在 `.env` 写入 `MINECLAW_API_KEY`，按需编辑 `providers.yml`。
 5. 审核默认 `whitelist.yml`、`functions.yml` 和 Workspace。
@@ -78,6 +78,17 @@ v1.3.0 不增加必填的控制面字段，现有 v1.2.x `config.yml`、`.env`�
 
 升级后运行 Tool/Function validate，再演练连续监听的权限、冷却、busy 和重启重置，以及含 Tool Call 的 Action Bar 和 Session 完整性。
 
+## 从 v1.3.x 升级
+
+v1.4.0 新增可选的 `openai_responses` Provider 协议；现有 `openai_chat_completions` Provider、配置字段和 Session 行为继续有效。常规停服、备份并替换 JAR 后，重点核对以下行为：
+
+- 不需要修改现有 Chat Provider。若启用 Responses，新增独立 Provider/model，`base_url` 只写 API 根地址，由 Mineclaw 追加 `/responses`；不要把 `/responses` 或 `/chat/completions` 写入 URL。
+- Responses 使用 `input` items、typed SSE 和扁平本地 Function Schema；Provider 原生 Tool payload 不会跨协议转换，必须按上游 Responses 形状单独审核。
+- Responses 请求显式使用 `store: false`，并在本地保存、回放 reasoning、`function_call` 与 `function_call_output` items；不依赖 `previous_response_id` 或 Provider 侧会话。`interleaved` 只适用于 Chat。
+- 官方 Responses input message 没有 `name` 字段。启用任一玩家身份开关时，Responses 自动使用已转义的 `<player>` / `<message>` 正文信封；Chat 仍使用 `name` 字段。
+
+升级后先运行控制面、Tool/Function validate，再按“配置并验证两种 Provider 协议”矩阵分别演练纯文本、Tool 往返、多轮回放、reasoning、压缩、失败和重试；确认旧 Chat 模型仍为默认模型后再切换生产流量。
+
 ## 管理命令与权限
 
 | 命令 | 默认权限节点 | 默认值 | 说明 |
@@ -110,6 +121,21 @@ v1.3.0 不增加必填的控制面字段，现有 v1.2.x `config.yml`、`.env`�
 3. 原子替换需要变更的文件。
 4. 执行 `/mineclaw reload`。
 5. 只有收到成功消息，候选快照才已发布；失败时查看安全诊断并修正，旧快照仍在服务。
+
+### 配置并验证两种 Provider 协议
+
+`openai_chat_completions` 与 `openai_responses` 可以作为不同 Provider 同时存在。切换协议时不要直接改写唯一的生产 Provider；先复制为独立 id，让两个模型条目引用各自 Provider，再逐一验收。它们可以复用同一个 `.env` 引用，但上游必须真实支持对应 endpoint 和线格式。
+
+1. 为 Chat 与 Responses 分别声明 Provider。两者的 `base_url` 都只写 API 根，不能带 `/chat/completions` 或 `/responses`；Mineclaw 会按 type 追加 endpoint。
+2. Provider 原生 Tool 的 `payload` 分别使用上游对应协议的 Schema。Mineclaw 只会自动转换 `tools.yml` 中的本地 Function Tool：Chat 使用嵌套 `function`，Responses 使用扁平 `name`、`description` 与 `parameters`。
+3. Responses 模型删除 `interleaved`；它只属于 Chat 的 `reasoning_content` 回放。Responses 不发送官方 input message 未定义的 `name`；启用 `identity.include_player_name_field` 时会自动改用已转义的正文身份信封，无需为协议切换改动全局身份配置。
+4. 原子替换 `providers.yml`（以及确有需要的 `config.yml`）并运行 `/mineclaw reload`；失败时确认旧快照仍可用。运行 `/mineclaw model list`，核对两个完整模型名。
+5. 切到 Chat 模型，依次验证纯文本流式回复、本地只读 Tool Call、Tool Result 后续请求、多轮上下文和一次无 Tool 压缩。确认请求走 `/chat/completions`、使用 `messages`，Function Schema 为嵌套形状。
+6. 切到 Responses 模型，重复同一组场景，并额外验证 `response.output_text.delta`、terminal completed/incomplete response、usage、带 opaque/encrypted content 的 reasoning item、`function_call` arguments、匹配 `call_id` 的 `function_call_output` 与后续完整本地回放。请求必须走 `/responses`、使用 `input`、Function Schema 为扁平形状，并显式包含 `store: false` 与 `include: [reasoning.encrypted_content]`。
+7. 分别为两种协议验证一个与协议匹配的只读 Provider 原生 Tool；不要用本地 Tool 成功来代替 Provider payload 验收。
+8. 检查 INFO 级日志中的成功、重试和失败边界，确认没有未知 typed event、孤立 function call、重复副作用或凭据。测试完成后先 `/mineclaw model default`，再决定是否移除临时 Provider。
+
+只有需要核对线格式时才短时使用 `logging.level: ALL`；它会记录两种协议的请求 Body，其中可能包含玩家对话、reasoning、Tool 参数/结果和本服资料。完成核对后立即恢复 INFO。`store: false` 只是不让 Mineclaw 依赖 Provider 侧响应存储，不能替代上游数据留存审查。
 
 ### Tool、Function、Workspace 与消息
 
@@ -147,7 +173,7 @@ Provider 返回上下文溢出时，Mineclaw 最多做一次压缩恢复和一�
 
 ### `control_plane_unavailable`
 
-检查 `.env` 引用是否有值、Provider/model 引用是否完整、URL 是否不含 `/chat/completions`、请求扩展是否覆盖保留字段，以及 whitelist 正则是否合法。修正后 `/mineclaw reload`。
+检查 `.env` 引用是否有值、Provider/model 引用是否完整、API type 是否为 `openai_chat_completions` 或 `openai_responses`、`base_url` 是否不含 `/chat/completions` 与 `/responses`、Responses 模型是否误配 `interleaved`、请求扩展是否覆盖保留字段，以及 whitelist 正则是否合法。修正后 `/mineclaw reload`。
 
 ### Tool 无效或不可用
 
@@ -163,7 +189,7 @@ Provider 返回上下文溢出时，Mineclaw 最多做一次压缩恢复和一�
 
 ### Provider 失败
 
-响应解析损坏、连接、timeout、408、429 和 5xx 会按 transport 重试；普通 4xx 直接失败。普通 Turn 的单次模型响应最多三次总尝试，压缩请求则使用完整 `max_retries`。确认上游支持 SSE streaming、tool calls、模型名和请求扩展。Provider 返回错误时，控制台直接显示上游响应原文；JSON 不再被拆字段或重写，SSE 错误也保留事件文本。响应最多保留 16 KiB，且可能包含上游回显的数据，应按敏感日志管理。
+响应解析损坏、连接、timeout、408、429 和 5xx 会按 transport 重试；普通 4xx 直接失败。普通 Turn 的单次模型响应最多三次总尝试，压缩请求则使用完整 `max_retries`。确认 API type、派生 endpoint、模型名、请求扩展、Provider payload 和上游实际能力一致：Chat Completions 应返回协议对应的 SSE chunk，Responses 应返回 typed SSE event，不能把两者混用。Tool 场景还要检查 Responses 的 function call、arguments 和 output 是否使用同一 `call_id`。Provider 返回错误时，控制台直接显示上游响应原文；JSON 不再被拆字段或重写，SSE 错误也保留事件文本。响应最多保留 16 KiB，且可能包含上游回显的数据，应按敏感日志管理。
 
 需要核对实际请求时，可临时设置 `logging.level: ALL` 并执行 `/mineclaw reload`。日志会保留完整 tools 与请求参数，但会把长消息截为前 100 个 Unicode 字符加 `...`。排障完成后恢复常规级别（默认 `INFO`）；即使没有凭据头，请求 Body 仍可能包含玩家对话和本服资料。
 
@@ -191,16 +217,16 @@ Provider 返回上下文溢出时，Mineclaw 最多做一次压缩恢复和一�
 产物：
 
 ```text
-build/plugins/Mineclaw-1.3.0.jar
+build/plugins/Mineclaw-1.4.0.jar
 ```
 
 构建使用 Java toolchain 25、Gradle Wrapper 9.5.0 和 dependency locking。JAR 会合并运行时依赖，排除签名文件、module descriptor 和所有 `.env`，并加入项目 LICENSE、NOTICE 与第三方许可证资源。
 
-## v1.3.0 发布检查
+## v1.4.0 发布检查
 
 发布候选至少完成：
 
-1. 版本一致：Gradle、`paper-plugin.yml`、README、产物名均为 `1.3.0`。
+1. 版本一致：Gradle、`paper-plugin.yml`、README、产物名均为 `1.4.0`。
 2. `./gradlew --no-daemon clean test assemblePlugin` 全部通过。
 3. 连续两次 clean build 的 JAR SHA-256 一致。
 4. JAR 中不存在 `.env`、凭据、重复 entry 或签名残留，存在 LICENSE/NOTICE/第三方声明。
@@ -216,5 +242,7 @@ build/plugins/Mineclaw-1.3.0.jar
 环境 Tool smoke test 必须覆盖 `player_snapshot`、`item_inspect` 的摘要/指定槽位/空槽/截断，以及 `block_inspect` 的 `look`/`feet`/无目标路径；同时确认旧 handler 在目录和 `native_tool.call` 中均被拒绝。
 
 v1.3.0 专项 smoke test 还应覆盖 `listen` 状态/on/off、非 OP 权限、隐式消息前缀、冷却/busy 与重启重置；Action Bar 首轮流式、后续原子替换、Tool 安全名称和最终公屏；完整 Tool transcript 档案、投影压缩不删档案，以及三次尝试后失败 Turn 不发布。
+
+v1.4.0 专项 smoke test 还应执行上文“双协议配置与验收”的完整矩阵：Chat Completions 与 Responses 各自覆盖纯文本、reasoning、local Tool、Provider Tool、多轮与压缩；确认 endpoint、请求容器、Function Schema、SSE 事件和回放 item 均未跨协议串线，Responses 始终为 `store: false`。
 
 仓库操作本身不需要提交或推送即可完成构建与审计；部署、tag、GitHub Release 和生产迁移应作为单独的显式变更步骤执行。

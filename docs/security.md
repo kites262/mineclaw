@@ -1,6 +1,6 @@
 # 安全模型
 
-Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文说明 v1.3.0 的信任来源、隔离范围和不能保证的事项。
+Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文说明 v1.4.0 的信任来源、隔离范围和不能保证的事项。
 
 ## 信任矩阵
 
@@ -9,18 +9,30 @@ Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文�
 | 玩家公屏输入 | 是 | 否 | 单 Turn、权限、速率限制、上下文预算 |
 | Workspace AGENTS/Skill | 是 | 否 | 只读文件根、大小/深度/超时；文档不是授权 |
 | 本地只读 Tool | 是 | 否 | 固定 Java handler、Folia 调度边界、结果脱敏 |
-| Provider 原生 Tool | 是 | 由 Provider 定义 | 严格条目外层；payload 原样透传并由上游校验 |
+| Provider 原生 Tool | 是 | 由 Provider 定义 | 严格条目外层；payload 按所选协议原样透传并由上游校验 |
 | 模型 `run_command` | 是 | 可能 | 本轮白名单、执行身份、目标玩家审批、结果语义 |
 | Reviewed Function | 模型只见调用契约 | 可能 | 参数 Schema、源码审核、capability、独立 JS 沙箱 |
 | 控制面配置与 `.env` | 否 | 决定系统边界 | 固定父目录、严格 YAML、原子快照、不可由文件 Tool 访问 |
 
 ## 公共会话玩家归属
 
-启用任一玩家身份表示时，玩家账号名在当前 Turn、已完成历史以及自动、手动压缩材料中保留。默认的 Chat Completions `name` 字段是权威归属；玩家在消息正文中写入的名称、`<player>` 标记或身份声明不会覆盖它。
+启用任一玩家身份表示时，玩家账号名在当前 Turn、已完成历史以及自动、手动压缩材料中保留。对于 Chat Completions，启用 `identity.include_player_name_field` 时 Mineclaw 生成的 `name` 是权威归属；玩家在消息正文中写入的名称、`<player>` 标记或身份声明不会覆盖它。
 
-可选的正文兼容表示由 Mineclaw 生成外层 `<player>` / `<message>` 信封，并转义玩家名与原始消息，防止正文伪造结构身份。同时启用两种表示时仍以 `name` 字段为准；同时关闭时，模型不获得可信玩家归属。
+可选的正文兼容表示由 Mineclaw 生成外层 `<player>` / `<message>` 信封，并转义玩家名与原始消息，防止正文伪造结构身份。官方 Responses input message 没有 `name` 字段，因此只要任一身份开关启用，Responses 都自动使用该信封且不发送非标准 `name`。两个开关同时关闭时模型不获得可信玩家归属。
 
 开启任一身份表示都会把 Minecraft 账号名随对话发送给 Provider，包括历史回放与压缩请求。Mineclaw 不因此发送 UUID、IP、权限或客户端信息。
+
+## Provider 协议与本地回放
+
+`openai_chat_completions` 与 `openai_responses` 是独立线协议，而不是可互换的 endpoint 别名。Mineclaw 根据每个 Provider 的 type 生成对应的 `/chat/completions` 或 `/responses` 请求、消息/item 容器、Function Tool Schema 和 SSE 解析路径。本地 Tool 会自动投影为所选协议需要的形状；Provider 原生 Tool payload 不会转换，配置错误会直接交给上游。
+
+Responses 请求显式使用 `store: false`，也不使用 `previous_response_id` 或 `conversation` 把公共 Session 托管给 Provider。Mineclaw 在内存 Session 中完整保留已发布的 message、reasoning、`function_call` 和 `function_call_output` items；发往后续请求前会把 assistant message 归一为 easy input message、剥离 `created_by` 等只读字段，并丢弃官方定义为不可安全回放的失败 output item。这避免了运行时依赖 Provider 侧响应对象，但有三项安全含义：
+
+- reasoning 与 Tool 参数/结果会和普通对话一样进入后续 Provider 请求，可能包含玩家或本服资料；
+- 本地 Session 仍只存在于插件进程内，重启后不会恢复，`store: false` 不是 Mineclaw 的持久化机制；
+- `store: false` 是请求语义，不能保证第三方 Provider 不按自身政策记录或保留请求，服主仍须审核上游条款、区域与日志策略。
+
+Chat 的 `interleaved.reasoning_content` 只属于 Chat Completions。Responses reasoning 作为 typed item 保存和回放，不能用 `interleaved` 配置改名或降级为普通文本字段。
 
 ## 连续监听边界
 
@@ -106,7 +118,7 @@ Mineclaw 区分“请求被接受”“命令已分发”和“游戏效果已�
 
 四个控制面文件通过固定路径读取，拒绝符号链接和不安全文件类型。YAML 解析拒绝重复 key、alias、merge、自定义 tag、未知字段和超限结构。
 
-`.env` 不进入发行 JAR，也不位于 Workspace。Provider 密钥用标准 Bearer header 发送；日志和错误展示不得包含凭据或完整敏感响应。建议：
+`.env` 不进入发行 JAR，也不位于 Workspace。两种 Provider 协议都用标准 Bearer header 发送密钥；日志和错误展示不得包含凭据或完整敏感响应。建议：
 
 - 优先用进程环境，其次用权限为 `0600` 的 `.env`；
 - API key 只授予必要 Provider 能力并定期轮换；
@@ -147,3 +159,4 @@ Mineclaw 区分“请求被接受”“命令已分发”和“游戏效果已�
 5. 确认 `.env` 权限、日志访问和备份范围。
 6. 从非 OP 玩家和目标玩家两种身份验证权限与交互。
 7. 检查最终话术没有把 dispatched 误报为 executed。
+8. 分别验证 Chat Completions 与 Responses 的 endpoint、Tool Schema、SSE 和错误路径；Responses 还要确认 `store: false`、完整 item 回放与玩家身份兼容策略。

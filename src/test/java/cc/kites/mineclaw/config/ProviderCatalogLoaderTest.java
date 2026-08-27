@@ -38,6 +38,21 @@ class ProviderCatalogLoaderTest {
     }
 
     @Test
+    void loadsResponsesProviderAndResolvesResponsesEndpoint() throws Exception {
+        String source = base("""
+                  mimo/model-a:
+                    limits: {context_window_tokens: 4096, max_output_tokens: 512}
+                """, "mimo/model-a").replace(
+                "type: openai_chat_completions", "type: openai_responses");
+
+        ProviderCatalog catalog = loader.parse(source, Map.of("KEY", "secret"));
+        ProviderCatalog.Provider provider = catalog.providerFor(catalog.requireModel("mimo/model-a"));
+
+        assertThat(provider.api().type()).isEqualTo(ProviderCatalog.ApiType.OPENAI_RESPONSES);
+        assertThat(provider.api().endpoint()).hasToString("https://example.com/v1/responses");
+    }
+
+    @Test
     void sharesOneProviderAcrossModelsAndSplitsOnlyTheFirstSlash() throws Exception {
         ProviderCatalog catalog = loader.parse(base("""
                   mimo/model-a:
@@ -140,6 +155,53 @@ class ProviderCatalogLoaderTest {
                     request: {extra_body: {thinking: {type: auto}}}
                 """, "mimo/model-a"), Map.of("KEY", "secret")))
                 .isInstanceOf(ConfigException.class).hasMessageContaining("enabled or disabled");
+    }
+
+    @Test
+    void rejectsResponsesManagedFieldsInExtraBody() {
+        for (String field : java.util.List.of("input", "instructions", "max_output_tokens", "store",
+                "background", "previous_response_id", "conversation", "include")) {
+            String source = base("""
+                      mimo/model-a:
+                        limits: {context_window_tokens: 4096, max_output_tokens: 512}
+                        request: {extra_body: {%s: blocked}}
+                    """.formatted(field), "mimo/model-a");
+
+            assertThatThrownBy(() -> loader.parse(source, Map.of("KEY", "secret")))
+                    .as(field)
+                    .isInstanceOf(ConfigException.class)
+                    .hasMessageContaining(field + " is reserved");
+        }
+    }
+
+    @Test
+    void rejectsInterleavedReasoningContentForResponsesProviders() {
+        String source = base("""
+                  mimo/model-a:
+                    limits: {context_window_tokens: 4096, max_output_tokens: 512}
+                    interleaved: {field: reasoning_content}
+                """, "mimo/model-a").replace(
+                "type: openai_chat_completions", "type: openai_responses");
+
+        assertThatThrownBy(() -> loader.parse(source, Map.of("KEY", "secret")))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("interleaved.field is unsupported for openai_responses");
+    }
+
+    @Test
+    void rejectsFullGenerationEndpointsAsBaseUrls() {
+        for (String endpoint : java.util.List.of(
+                "https://example.com/v1/chat/completions", "https://example.com/v1/responses/")) {
+            String source = base("""
+                      mimo/model-a:
+                        limits: {context_window_tokens: 4096, max_output_tokens: 512}
+                    """, "mimo/model-a").replace("https://example.com/v1/", endpoint);
+
+            assertThatThrownBy(() -> loader.parse(source, Map.of("KEY", "secret")))
+                    .as(endpoint)
+                    .isInstanceOf(ConfigException.class)
+                    .hasMessageContaining("without /chat/completions or /responses");
+        }
     }
 
     @Test

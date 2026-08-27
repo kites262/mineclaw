@@ -88,19 +88,28 @@ final class ContextTokenEstimator {
                            boolean includeMessageNames, boolean includePlayerContentPrefix) {
         long tokens = 8L + textTokens(system);
         for (ApiMessage message : Objects.requireNonNull(messages, "messages")) {
-            tokens += 4L + textTokens(message.role())
+            long normalizedTokens = 4L + textTokens(message.role())
                     + textTokens(message.modelContent(includePlayerContentPrefix));
             if (includeMessageNames) {
-                tokens += textTokens(message.name());
+                normalizedTokens += textTokens(message.name());
             }
             for (ToolCall call : message.toolCalls()) {
-                tokens += 8L + textTokens(call.id()) + textTokens(call.name())
+                normalizedTokens += 8L + textTokens(call.id()) + textTokens(call.name())
                         + textTokens(call.arguments());
             }
-            tokens += textTokens(message.toolCallId());
+            normalizedTokens += textTokens(message.toolCallId());
             for (var entry : message.providerFields().entrySet()) {
-                tokens += textTokens(entry.getKey()) + textTokens(entry.getValue());
+                normalizedTokens += textTokens(entry.getKey()) + textTokens(entry.getValue());
             }
+            long responseItemTokens = 4L;
+            for (JsonObject item : message.responseItems()) {
+                responseItemTokens += textTokens(item.toString());
+            }
+            // A request sends either the normalized Chat frame or its raw Responses items,
+            // never both. Use the larger projection so model switching remains conservative
+            // without double-counting Responses history during usage calibration.
+            tokens += message.responseItems().isEmpty()
+                    ? normalizedTokens : Math.max(normalizedTokens, responseItemTokens);
         }
         for (JsonObject tool : Objects.requireNonNull(tools, "tools")) {
             tokens += 8L + textTokens(tool.toString());

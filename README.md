@@ -9,11 +9,11 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
 
 <p>
-  <a href="https://github.com/kites262/mineclaw/releases/tag/1.3.0"><img alt="Mineclaw 1.3.0" src="https://img.shields.io/badge/Mineclaw-1.3.0-4c8bf5"></a>
+  <a href="https://github.com/kites262/mineclaw/releases/tag/1.4.0"><img alt="Mineclaw 1.4.0" src="https://img.shields.io/badge/Mineclaw-1.4.0-4c8bf5"></a>
   <img alt="Minecraft 26.2" src="https://img.shields.io/badge/Minecraft-26.2-62b47a?logo=minecraft">
   <img alt="Paper and Folia" src="https://img.shields.io/badge/Paper%20%2F%20Folia-native-efc75e">
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-e76f00?logo=openjdk">
-  <img alt="OpenAI-compatible Chat Completions" src="https://img.shields.io/badge/API-OpenAI--compatible-412991">
+  <img alt="OpenAI-compatible Chat Completions and Responses" src="https://img.shields.io/badge/API-Chat%20Completions%20%2B%20Responses-412991">
   <a href="LICENSE"><img alt="Apache License 2.0" src="https://img.shields.io/badge/License-Apache--2.0-8b5cf6"></a>
 </p>
 
@@ -176,8 +176,8 @@ Mineclaw 位于玩家、世界、服务器知识和插件生态的交汇处。�
 > **Runtime target:** Paper 26.2 or Folia 26.2 with Java 25. Other server, Minecraft, and Java versions are outside the current compatibility promise.<br>
 > **运行目标：** Paper 26.2 或 Folia 26.2 + Java 25。其他服务端、Minecraft 或 Java 版本不在当前兼容承诺内。
 
-1. Download `Mineclaw-1.3.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) and place it in the server's `plugins/` directory.<br>
-   从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.3.0.jar`，放入服务端 `plugins/`。
+1. Download `Mineclaw-1.4.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) and place it in the server's `plugins/` directory.<br>
+   从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.4.0.jar`，放入服务端 `plugins/`。
 
 2. Start the server once so Mineclaw can generate its default files, then stop it.<br>
    启动一次，让 Mineclaw 生成默认文件，然后停止服务端。
@@ -189,8 +189,8 @@ Mineclaw 位于玩家、世界、服务器知识和插件生态的交汇处。�
    MINECLAW_API_KEY=replace-with-your-secret
    ```
 
-4. Adjust `providers.yml` as needed. The bundled configuration uses OpenAI-compatible Chat Completions and sends credentials through the standard `Authorization: Bearer <key>` header.<br>
-   按需修改 `providers.yml`。发行配置使用 OpenAI-compatible Chat Completions，并通过标准 `Authorization: Bearer <key>` 请求头发送凭据。
+4. Adjust `providers.yml` as needed. Mineclaw supports the coexisting `openai_chat_completions` and `openai_responses` API types; the bundled configuration uses Chat Completions. Both send credentials through the standard `Authorization: Bearer <key>` header.<br>
+   按需修改 `providers.yml`。Mineclaw 支持并存的 `openai_chat_completions` 与 `openai_responses` API type；发行配置默认使用 Chat Completions。两者都通过标准 `Authorization: Bearer <key>` 请求头发送凭据。
 
 5. Start the server and speak to Mineclaw in public chat.<br>
    启动服务端，在公屏与 Mineclaw 对话。
@@ -221,6 +221,9 @@ plugins/Mineclaw/
 
 The default Provider example includes a 128K context window, 16K maximum output, a 100K automatic compaction threshold, interleaved `reasoning_content` replay, a Session-level `prompt_cache_key`, and MiMo native `web_search`. See the [configuration reference](docs/configuration.md) for every field and lifecycle.<br>
 默认 Provider 示例包含 128K 上下文、16K 最大输出、100K 自动压缩界限、`reasoning_content` 交错回传、Session 级 `prompt_cache_key`，以及 MiMo 原生 `web_search`。所有字段和生命周期见[配置参考](docs/configuration.md)。
+
+Each Provider selects its wire protocol independently. `base_url` is always an API root—never include `/chat/completions` or `/responses`. Chat Completions uses `messages` and nested function definitions; Responses uses `input` items, typed SSE events, flattened function definitions, and explicit `store: false`. Mineclaw replays the complete local Responses transcript, including reasoning and function-call items, instead of relying on Provider-side response storage. Provider-native Tool payloads are opaque and therefore must already match the selected protocol.<br>
+每个 Provider 都独立选择线协议。`base_url` 始终是 API 根地址，不能包含 `/chat/completions` 或 `/responses`。Chat Completions 使用 `messages` 与嵌套 Function 定义；Responses 使用 `input` items、typed SSE、扁平 Function 定义和显式 `store: false`。Mineclaw 不依赖 Provider 侧响应存储，而是在后续 Responses 请求中完整回放本地 transcript，包括 reasoning 与 function-call items。Provider 原生 Tool payload 是不透明透传数据，因此必须预先匹配所选协议。
 
 > [!IMPORTANT]
 > **Upgrading from v0.x:** v1.0.0 is an incompatible major release. It does not read old schemas and has no compatibility conversion layer. Back up the old directory, let v1 generate new files, then migrate the configuration intent according to the [migration guide](docs/operations.md#从-v0x-迁移). Do not copy the old configuration over the new one.<br>
@@ -281,8 +284,8 @@ Read the complete trust model, command paths, JavaScript runtime, and result sem
 
 **长对话也有自己的整理节奏**
 
-A public Session gives players and Mineclaw a shared history. Every completed Turn is archived losslessly with player attribution, Tool Calls, Tool Results, Provider replay fields, and the untruncated final answer. As the conversation grows, Mineclaw may compact the model-context projection while leaving that raw Session archive intact.<br>
-公共 Session 让玩家与 Mineclaw 共享一段连续经历。每个已完成 Turn 都会连同玩家归属、Tool Call、Tool Result、Provider 回放字段和未截断最终回复无损归档。对话变长时，Mineclaw 可以整理送给模型的上下文投影，但不会删除 Session 原始档案。
+A public Session gives players and Mineclaw a shared history. Every completed Turn is archived losslessly with player attribution, Tool Calls, Tool Results, Provider replay fields, and the untruncated final answer. For Responses Providers, this includes reasoning, function-call, and function-call-output items needed for complete local replay while requests explicitly use `store: false`. As the conversation grows, Mineclaw may compact the model-context projection while leaving that raw Session archive intact.<br>
+公共 Session 让玩家与 Mineclaw 共享一段连续经历。每个已完成 Turn 都会连同玩家归属、Tool Call、Tool Result、Provider 回放字段和未截断最终回复无损归档。对于 Responses Provider，这还包括完整本地回放所需的 reasoning、function-call 与 function-call-output items，同时请求显式使用 `store: false`。对话变长时，Mineclaw 可以整理送给模型的上下文投影，但不会删除 Session 原始档案。
 
 The default model configuration provides a 128K context window, 16K maximum output, and a 100K automatic compaction threshold. Administrators can also run `/mineclaw compact` at any time. Token accounting, queuing, and overflow recovery are covered in the [configuration reference](docs/configuration.md#模型限制与自动压缩).<br>
 默认模型配置提供 128K 上下文、16K 最大输出和 100K 自动整理界限；管理员也可以随时使用 `/mineclaw compact` 主动整理。Token 计算、排队和溢出恢复见[配置参考](docs/configuration.md#模型限制与自动压缩)。
@@ -341,12 +344,12 @@ Public chat access uses `mineclaw.command.chat` and is enabled by default. See t
 ```bash
 git clone https://github.com/kites262/mineclaw.git
 cd mineclaw
-git checkout 1.3.0
+git checkout 1.4.0
 ./gradlew --no-daemon clean test assemblePlugin
 ```
 
-The deployable artifact is `build/plugins/Mineclaw-1.3.0.jar`. The JAR uses reproducible file ordering and timestamps and includes Apache-2.0, NOTICE, and third-party license resources.<br>
-可部署产物位于 `build/plugins/Mineclaw-1.3.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
+The deployable artifact is `build/plugins/Mineclaw-1.4.0.jar`. The JAR uses reproducible file ordering and timestamps and includes Apache-2.0, NOTICE, and third-party license resources.<br>
+可部署产物位于 `build/plugins/Mineclaw-1.4.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
 
 ## ✅ Compatibility
 
@@ -358,8 +361,11 @@ The deployable artifact is `build/plugins/Mineclaw-1.3.0.jar`. The JAR uses repr
 - **Runtime:** Java 25.<br>
   **运行时：** Java 25。
 
-- **Model API:** OpenAI-compatible Chat Completions.<br>
-  **模型接口：** OpenAI-compatible Chat Completions。
+- **Model API:** OpenAI-compatible Chat Completions or Responses, selected per Provider.<br>
+  **模型接口：** 每个 Provider 可选择 OpenAI-compatible Chat Completions 或 Responses。
+
+  The official Responses input-message shape has no `name` field. When player-name attribution is enabled, Mineclaw automatically uses its escaped `<player>` / `<message>` content envelope for Responses while Chat Completions keeps the `name` field.<br>
+  官方 Responses 输入消息没有 `name` 字段。启用玩家名归属时，Mineclaw 会为 Responses 自动使用已转义的 `<player>` / `<message>` 正文信封；Chat Completions 仍使用 `name` 字段。
 
 - **Other platforms:** Other server, Paper, Minecraft, and Java versions are not part of the current compatibility promise.<br>
   **其他平台：** 其他服务端、Paper、Minecraft 与 Java 版本不在当前兼容承诺内。

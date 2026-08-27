@@ -28,7 +28,8 @@ public record ChatCompletionRequest(
         Optional<String> promptCacheKey,
         boolean requestDiagnostics,
         boolean includeMessageNames,
-        boolean includePlayerContentPrefix
+        boolean includePlayerContentPrefix,
+        Protocol protocol
 ) {
     public ChatCompletionRequest {
         Objects.requireNonNull(endpoint, "endpoint");
@@ -39,6 +40,7 @@ public record ChatCompletionRequest(
         Objects.requireNonNull(extraBody, "extraBody");
         Objects.requireNonNull(interleavedField, "interleavedField");
         Objects.requireNonNull(promptCacheKey, "promptCacheKey");
+        Objects.requireNonNull(protocol, "protocol");
         if (!endpoint.isAbsolute()
                 || !("http".equalsIgnoreCase(endpoint.getScheme())
                 || "https".equalsIgnoreCase(endpoint.getScheme()))
@@ -82,10 +84,24 @@ public record ChatCompletionRequest(
                                  Duration retryBackoff, int maxOutputTokens,
                                  JsonObject extraBody, Optional<String> interleavedField,
                                  Optional<String> promptCacheKey, boolean requestDiagnostics,
+                                 boolean includeMessageNames, boolean includePlayerContentPrefix) {
+        this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
+                maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
+                promptCacheKey, requestDiagnostics, includeMessageNames,
+                includePlayerContentPrefix, Protocol.CHAT_COMPLETIONS);
+    }
+
+    public ChatCompletionRequest(URI endpoint, String modelReference, String model,
+                                 String systemPrompt, List<ApiMessage> messages,
+                                 List<JsonObject> tools, Duration timeout, int maxRetries,
+                                 Duration retryBackoff, int maxOutputTokens,
+                                 JsonObject extraBody, Optional<String> interleavedField,
+                                 Optional<String> promptCacheKey, boolean requestDiagnostics,
                                  boolean includeMessageNames) {
         this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
                 maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
-                promptCacheKey, requestDiagnostics, includeMessageNames, true);
+                promptCacheKey, requestDiagnostics, includeMessageNames, true,
+                Protocol.CHAT_COMPLETIONS);
     }
 
     public ChatCompletionRequest(URI endpoint, String modelReference, String model,
@@ -96,7 +112,7 @@ public record ChatCompletionRequest(
                                  Optional<String> promptCacheKey, boolean requestDiagnostics) {
         this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
                 maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
-                promptCacheKey, requestDiagnostics, true, true);
+                promptCacheKey, requestDiagnostics, true, true, Protocol.CHAT_COMPLETIONS);
     }
 
     public ChatCompletionRequest(URI endpoint, String modelReference, String model,
@@ -107,7 +123,7 @@ public record ChatCompletionRequest(
                                  Optional<String> promptCacheKey) {
         this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
                 maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
-                promptCacheKey, false, true, true);
+                promptCacheKey, false, true, true, Protocol.CHAT_COMPLETIONS);
     }
 
     public ChatCompletionRequest(URI endpoint, String modelReference, String model,
@@ -117,14 +133,15 @@ public record ChatCompletionRequest(
                                  JsonObject extraBody, Optional<String> interleavedField) {
         this(endpoint, modelReference, model, systemPrompt, messages, tools, timeout,
                 maxRetries, retryBackoff, maxOutputTokens, extraBody, interleavedField,
-                Optional.empty(), false, true, true);
+                Optional.empty(), false, true, true, Protocol.CHAT_COMPLETIONS);
     }
 
     public ChatCompletionRequest(URI endpoint, String model, String systemPrompt,
                                  List<ApiMessage> messages, List<JsonObject> tools,
                                  Duration timeout, int maxRetries, Duration retryBackoff) {
         this(endpoint, model, model, systemPrompt, messages, tools, timeout, maxRetries, retryBackoff,
-                0, new JsonObject(), Optional.empty(), Optional.empty(), false, true, true);
+                0, new JsonObject(), Optional.empty(), Optional.empty(), false, true, true,
+                Protocol.CHAT_COMPLETIONS);
     }
 
     @Override
@@ -145,5 +162,11 @@ public record ChatCompletionRequest(
         } catch (IllegalArgumentException exception) {
             throw new IllegalArgumentException("promptCacheKey must contain a canonical UUID", exception);
         }
+    }
+
+    /** Wire shape selected by the Provider's configured API type. */
+    public enum Protocol {
+        CHAT_COMPLETIONS,
+        RESPONSES
     }
 }

@@ -80,6 +80,18 @@ public record ToolDefinition(
         return payload.deepCopy();
     }
 
+    /** Responses API projection for a locally dispatched Function Tool. */
+    public JsonObject toResponsesTool() {
+        if (!available()) {
+            throw new IllegalStateException("Tool " + printableHandler() + " is not enabled");
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("type", "function");
+        JsonObject function = payload.getAsJsonObject("function");
+        function.entrySet().forEach(entry -> result.add(entry.getKey(), entry.getValue().deepCopy()));
+        return result;
+    }
+
     public String printableHandler() {
         return handler.isBlank() ? "entry #" + index : handler;
     }

@@ -27,7 +27,9 @@ public final class ProviderCatalogLoader {
     private static final Pattern ID = Pattern.compile("[a-z][a-z0-9_.-]{0,63}");
     private static final Pattern ENV = Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_]*)}");
     private static final Set<String> RESERVED = Set.of("model", "messages", "tools", "tool_choice",
-            "stream", "stream_options", "max_tokens", "max_completion_tokens", "prompt_cache_key");
+            "stream", "stream_options", "max_tokens", "max_completion_tokens", "prompt_cache_key",
+            "input", "instructions", "max_output_tokens", "store", "background", "previous_response_id",
+            "conversation", "include");
     private final Function<String, String> processEnvironment;
 
     public ProviderCatalogLoader() {
@@ -160,7 +162,8 @@ public final class ProviderCatalogLoader {
             JsonObject value = object(entry.get("interleaved"), path + ".interleaved", true);
             exact(value, Set.of("field"), path + ".interleaved", true);
             String field = string(value.get("field"), path + ".interleaved.field");
-            if (!field.equals("reasoning_content")) {
+            if (!field.equals("reasoning_content")
+                    || provider.api().type() != ProviderCatalog.ApiType.OPENAI_CHAT_COMPLETIONS) {
                 throw invalid(path + ".interleaved.field is unsupported for " + provider.api().type().wireName());
             }
             interleaved = Optional.of(field);
@@ -256,8 +259,9 @@ public final class ProviderCatalogLoader {
             if (!uri.isAbsolute() || uri.getHost() == null || uri.getUserInfo() != null
                     || uri.getQuery() != null || uri.getFragment() != null
                     || !(uri.getScheme().equalsIgnoreCase("http") || uri.getScheme().equalsIgnoreCase("https"))
-                    || normalized.endsWith("/chat/completions")) {
-                throw invalid(path + " must be an HTTP(S) API base URL without /chat/completions");
+                    || normalized.endsWith("/chat/completions") || normalized.endsWith("/responses")) {
+                throw invalid(path
+                        + " must be an HTTP(S) API base URL without /chat/completions or /responses");
             }
             return uri;
         } catch (URISyntaxException exception) {

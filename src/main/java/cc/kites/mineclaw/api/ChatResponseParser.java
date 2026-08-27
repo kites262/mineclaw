@@ -265,8 +265,13 @@ final class ChatResponseParser {
 
     static ChatCompletionException errorResponse(int statusCode, String body, String requestId,
                                                    boolean bodyTruncated) {
+        return errorResponse(statusCode, body, requestId, bodyTruncated, "Chat Completions");
+    }
+
+    static ChatCompletionException errorResponse(int statusCode, String body, String requestId,
+                                                   boolean bodyTruncated, String protocolName) {
         boolean retryable = ChatCompletionsClient.isRetryableStatus(statusCode);
-        return new ChatCompletionException("Chat Completions request failed with HTTP " + statusCode,
+        return new ChatCompletionException(protocolName + " request failed with HTTP " + statusCode,
                 statusCode, retryable, requestId, upstreamResponse(body, bodyTruncated));
     }
 

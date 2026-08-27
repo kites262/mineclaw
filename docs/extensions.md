@@ -73,7 +73,23 @@ Skill 应写清：触发场景、准确名称、参数 Schema、前置观察、�
 
 v1.2.0 删除了 `look_block`、`feet_block` 和 `inventory`。Function capability 必须分别迁移到 `native_tool.call.block_inspect` 或 `native_tool.call.item_inspect`，并传入对应模式；旧 handler 会被拒绝。
 
-Provider 能力属于 `providers.yml providers.*.tools`。每个条目的 `id` 只用于目录身份和诊断，`payload` 作为 JSON object 按 Provider 原生格式原样进入请求；Mineclaw 不校验或改写 payload 内部字段，默认示例是 MiMo `web_search`。即使 payload 使用 `type: function`，它也只会透传给上游，不会注册成本地 handler，也不能被 JavaScript Function 通过 `native_tool.call` 间接调用；Function 的 native capability 只面向本地 handler。
+`tools.yml` 的本地 Tool 只维护一份规范目录，运行时按 Provider type 投影线格式。`openai_chat_completions` 使用嵌套 Function Schema：
+
+```json
+{"type":"function","function":{"name":"online_players","description":"...","parameters":{"type":"object"}}}
+```
+
+`openai_responses` 则自动扁平为：
+
+```json
+{"type":"function","name":"online_players","description":"...","parameters":{"type":"object"}}
+```
+
+这项转换只适用于 Mineclaw 已注册并校验过的本地 Tool。模型调用后，Chat 通过 assistant `tool_calls` 与 `tool` message 继续；Responses 通过 typed `function_call` 与匹配 `call_id` 的 `function_call_output` item 继续。Mineclaw 会把这些 Responses items 连同 reasoning items 保存在本地完整 Turn 中，并在后续请求回放，而不是依赖 Provider 侧保存 response。
+
+Provider 能力属于 `providers.yml providers.*.tools`。每个条目的 `id` 只用于目录身份和诊断，`payload` 作为 JSON object 按 Provider 原生格式原样进入请求；Mineclaw 不校验、改写或在 Chat/Responses 之间转换 payload 内部字段。默认 MiMo `web_search` 是 Chat Completions 示例；若 Provider type 改为 Responses，必须换成该上游 Responses endpoint 接受的 Tool payload。Function 类 Provider payload 同样要自行选择嵌套 Chat 形状或扁平 Responses 形状。
+
+即使 Provider payload 使用 `type: function`，它也只会透传给上游，不会注册成本地 handler，也不能被 JavaScript Function 通过 `native_tool.call` 间接调用；Function 的 native capability 只面向本地 handler。协议匹配、字段语义、Provider 侧权限和副作用都由服主审核并由上游最终校验。
 
 ## 编写 Function
 
@@ -230,3 +246,4 @@ const dispatch = await api.invoke({
 5. 检查第一个副作用之前完成所有必要确认。
 6. 检查返回值保留原始错误和必要上下文，并且 Skill 没有教模型过度宣称。
 7. 最后再启用条目；活动 Turn 会继续使用其开始时的不可变快照。
+8. 如果同时启用 Chat Completions 与 Responses，分别检查本地 Function Schema 的嵌套/扁平投影、Provider payload 的协议形状，以及 Tool Call/Result 在下一请求中的完整回放。

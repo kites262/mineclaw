@@ -16,7 +16,7 @@ class PluginResourcesTest {
     void paperDescriptorMatchesRuntimeAndDeclaresEveryPermission() throws Exception {
         YamlConfiguration descriptor = yaml("/paper-plugin.yml");
         assertThat(descriptor.getString("name")).isEqualTo("Mineclaw");
-        assertThat(descriptor.getString("version")).isEqualTo("1.3.0");
+        assertThat(descriptor.getString("version")).isEqualTo("1.4.0");
         assertThat(descriptor.getString("main")).isEqualTo("cc.kites.mineclaw.MineclawPlugin");
         assertThat(descriptor.getString("api-version")).isEqualTo("26.2");
         assertThat(descriptor.getBoolean("folia-supported")).isTrue();
