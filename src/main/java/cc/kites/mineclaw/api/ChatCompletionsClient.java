@@ -613,7 +613,8 @@ public final class ChatCompletionsClient {
     private static void validateSessionId(String sessionId) {
         Objects.requireNonNull(sessionId, "sessionId");
         if (sessionId.isBlank() || sessionId.codePointCount(0, sessionId.length()) > 256
-                || sessionId.codePoints().anyMatch(Character::isISOControl)) {
+                || sessionId.codePoints().anyMatch(character -> Character.isISOControl(character)
+                || character > 0xff)) {
             throw new IllegalArgumentException("sessionId is invalid");
         }
     }

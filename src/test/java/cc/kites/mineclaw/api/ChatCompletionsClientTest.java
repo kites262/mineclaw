@@ -210,6 +210,11 @@ class ChatCompletionsClientTest {
                 Map.of("X-Test", "emoji-😀"), "session", IGNORE_STREAM))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("invalid header value");
+
+        assertThatThrownBy(() -> client().complete(request("opencode/model", 0), "secret",
+                Map.of(), "emoji-😀", IGNORE_STREAM))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("sessionId is invalid");
     }
 
     @Test
