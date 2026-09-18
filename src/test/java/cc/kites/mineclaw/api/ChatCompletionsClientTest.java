@@ -205,6 +205,14 @@ class ChatCompletionsClientTest {
     }
 
     @Test
+    void rejectsNonLatin1ExtraHeaderValuesBeforeStartingTransport() {
+        assertThatThrownBy(() -> client().complete(request("custom/model", 0), "secret",
+                Map.of("X-Test", "emoji-😀"), "session", IGNORE_STREAM))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("invalid header value");
+    }
+
+    @Test
     void canOmitPlayerNameFieldWithoutRemovingContentMarker() {
         AtomicReference<JsonObject> requestBody = new AtomicReference<>();
         server.createContext("/v1/chat/completions", exchange -> {

@@ -573,7 +573,8 @@ public final class ChatCompletionsClient {
             totalValueCodePoints[0] += valueCodePoints;
             if (value.contains("${") || value.isBlank()
                     || valueCodePoints > 8_192 || totalValueCodePoints[0] > 32_768
-                    || value.codePoints().anyMatch(Character::isISOControl)) {
+                    || value.codePoints().anyMatch(character -> Character.isISOControl(character)
+                    || character > 0xff)) {
                 throw new IllegalArgumentException("extraHeaders contains an invalid header value");
             }
             headers.put(name, value);

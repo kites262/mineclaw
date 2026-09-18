@@ -151,7 +151,7 @@ providers:
     tools: []
 ```
 
-Header 名大小写不敏感且不能重复。`Accept`、`Authorization`、`Content-Type`、`Host`、`Content-Length` 等由 HTTP transport 管理的 header 不能覆盖；header 值不能是空白、包含控制字符或引用不存在的变量。配置值可能包含密钥，因此不会进入 API 配置的字符串展示或请求诊断日志。
+Header 名大小写不敏感且不能重复。`Accept`、`Authorization`、`Content-Type`、`Host`、`Content-Length` 等由 HTTP transport 管理的 header 不能覆盖；header 值不能是空白、包含控制字符或 Latin-1 范围外的字符，也不能引用不存在的变量。配置值可能包含密钥，因此不会进入 API 配置的字符串展示或请求诊断日志。
 
 当模型引用的 provider ID 精确为 `opencode`、`opencode-go` 或 `opencode-zen` 时，Mineclaw 还会自动执行 OpenCode 客户端身份规则：若配置未提供 `User-Agent`（大小写不敏感），补入 Mineclaw UA；`x-opencode-session` 始终被当前公共会话的稳定 ID 覆盖。也就是说，自定义 UA 优先，而 OpenCode session identity 由运行时掌控；手动写 `x-opencode-session: ${session_id}` 会得到相同值。其他 provider 不触发自动规则，可用 `extra_headers` 自行构造相应 header。
 

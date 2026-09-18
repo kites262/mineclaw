@@ -178,7 +178,8 @@ public final class ProviderCatalogLoader {
                     || totalValueCodePoints > MAX_HEADER_VALUES_CODE_POINTS) {
                 throw invalid(headerPath + " is blank or exceeds the configured header value limit");
             }
-            if (value.codePoints().anyMatch(Character::isISOControl)) {
+            if (value.codePoints().anyMatch(character -> Character.isISOControl(character)
+                    || character > 0xff)) {
                 throw invalid(headerPath + " contains an invalid HTTP header character");
             }
             result.put(name, value);

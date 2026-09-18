@@ -82,6 +82,7 @@ class ProviderCatalogLoaderTest {
                 "duplicates", "X-Test: one\nx-test: two\n",
                 "managed", "Authorization: replacement\n",
                 "control", "X-Test: \"line\\nfeed\"\n",
+                "non Latin-1", "X-Test: 😀\n",
                 "missing variable", "X-Test: ${MISSING}\n"
         ).entrySet()) {
             String source = withExtraHeaders(base("""
