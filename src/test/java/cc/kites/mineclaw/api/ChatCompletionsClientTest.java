@@ -17,6 +17,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -104,6 +105,103 @@ class ChatCompletionsClientTest {
                 .isEqualTo("<player>Alice</player>\n<message>看哪里</message>");
         assertThat(messages.get(2).getAsJsonObject().getAsJsonArray("tool_calls")).hasSize(1);
         assertThat(messages.get(3).getAsJsonObject().get("tool_call_id").getAsString()).isEqualTo("old_call");
+    }
+
+    @Test
+    void automaticallyAddsOpenCodeIdentityHeadersForAllSupportedProviderIds() {
+        CopyOnWriteArrayList<String> userAgents = new CopyOnWriteArrayList<>();
+        CopyOnWriteArrayList<String> sessions = new CopyOnWriteArrayList<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            userAgents.add(exchange.getRequestHeaders().getFirst("User-Agent"));
+            sessions.add(exchange.getRequestHeaders().getFirst("x-opencode-session"));
+            respond(exchange, 200, ordinaryResponse("ok"));
+        });
+
+        for (String provider : List.of("opencode", "opencode-go", "opencode-zen")) {
+            client().complete(request(provider + "/model", 0), "secret", Map.of(),
+                    "stable-session", IGNORE_STREAM).join();
+        }
+
+        assertThat(userAgents).hasSize(3).allMatch(value -> value.matches("mineclaw/(dev|1\\.5\\.0)"));
+        assertThat(sessions).containsExactly("stable-session", "stable-session", "stable-session");
+    }
+
+    @Test
+    void expandsCustomHeaderVariablesPreservesCustomUserAgentAndOverridesOpenCodeSession() {
+        AtomicReference<String> userAgent = new AtomicReference<>();
+        AtomicReference<String> session = new AtomicReference<>();
+        AtomicReference<String> trace = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            userAgent.set(exchange.getRequestHeaders().getFirst("User-Agent"));
+            session.set(exchange.getRequestHeaders().getFirst("x-opencode-session"));
+            trace.set(exchange.getRequestHeaders().getFirst("X-Trace"));
+            respond(exchange, 200, ordinaryResponse("ok"));
+        });
+
+        client().complete(request("opencode-go/model", 0), "secret", Map.of(
+                "user-agent", "custom-client/9",
+                "X-OpenCode-Session", "caller-value",
+                "X-Trace", "${session_id}:${user_agent}"
+        ), "authoritative-session", IGNORE_STREAM).join();
+
+        assertThat(userAgent).hasValue("custom-client/9");
+        assertThat(session).hasValue("authoritative-session");
+        assertThat(trace.get()).matches("authoritative-session:mineclaw/(dev|1\\.5\\.0)");
+    }
+
+    @Test
+    void supportsManualSessionAndUserAgentTemplatesForOtherProviders() {
+        AtomicReference<String> userAgent = new AtomicReference<>();
+        AtomicReference<String> session = new AtomicReference<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            userAgent.set(exchange.getRequestHeaders().getFirst("User-Agent"));
+            session.set(exchange.getRequestHeaders().getFirst("X-Provider-Session"));
+            respond(exchange, 200, ordinaryResponse("ok"));
+        });
+
+        client().complete(request("custom/model", 0), "secret", Map.of(
+                "User-Agent", "${user_agent}",
+                "X-Provider-Session", "prefix-${session_id}"
+        ), "manual-session", IGNORE_STREAM).join();
+
+        assertThat(userAgent.get()).matches("mineclaw/(dev|1\\.5\\.0)");
+        assertThat(session).hasValue("prefix-manual-session");
+    }
+
+    @Test
+    void reusesOpenCodeIdentityHeadersAcrossRetries() {
+        AtomicInteger attempts = new AtomicInteger();
+        CopyOnWriteArrayList<String> sessions = new CopyOnWriteArrayList<>();
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            sessions.add(exchange.getRequestHeaders().getFirst("x-opencode-session"));
+            if (attempts.getAndIncrement() == 0) {
+                respond(exchange, 503, "{\"error\":\"retry\"}");
+            } else {
+                respond(exchange, 200, ordinaryResponse("ok"));
+            }
+        });
+
+        client().complete(request("opencode-zen/model", 1), "secret", Map.of(),
+                "retry-session", IGNORE_STREAM).join();
+
+        assertThat(sessions).containsExactly("retry-session", "retry-session");
+    }
+
+    @Test
+    void rejectsRenderedExtraHeadersThatExceedTheAggregateLimit() {
+        LinkedHashMap<String, String> headers = new LinkedHashMap<>();
+        for (int index = 0; index < 5; index++) {
+            headers.put("X-Large-" + index, "x".repeat(7_000));
+        }
+
+        assertThatThrownBy(() -> client().complete(request("custom/model", 0), "secret", headers,
+                "session", IGNORE_STREAM))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("invalid header value");
     }
 
     @Test
@@ -784,6 +882,12 @@ class ChatCompletionsClientTest {
     private ChatCompletionRequest request(List<ApiMessage> messages, List<JsonObject> tools, int maxRetries) {
         return new ChatCompletionRequest(endpoint(), "deepseek-v4-flash", "system rules", messages, tools,
                 Duration.ofSeconds(2), maxRetries, Duration.ofMillis(1));
+    }
+
+    private ChatCompletionRequest request(String modelReference, int maxRetries) {
+        return new ChatCompletionRequest(endpoint(), modelReference, "deepseek-v4.1-flash",
+                "system rules", List.of(ApiMessage.user("test")), List.of(), Duration.ofSeconds(2),
+                maxRetries, Duration.ofMillis(1), 0, new JsonObject(), Optional.empty(), Optional.empty());
     }
 
     private URI endpoint() {

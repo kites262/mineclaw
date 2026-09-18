@@ -1,6 +1,6 @@
 # 运维手册
 
-本文覆盖 Mineclaw 1.4.0 的安装、迁移、日常管理、诊断、构建和发布检查。
+本文覆盖 Mineclaw 1.5.0 的安装、迁移、日常管理、诊断、构建和发布检查。
 
 ## 运行要求
 
@@ -14,7 +14,7 @@
 ## 全新安装
 
 1. 停止服务端。
-2. 把 `Mineclaw-1.4.0.jar` 放入 `plugins/`。
+2. 把 `Mineclaw-1.5.0.jar` 放入 `plugins/`。
 3. 启动一次，使插件生成 `plugins/Mineclaw/`，再停止服务端。
 4. 在 `.env` 写入 `MINECLAW_API_KEY`，按需编辑 `providers.yml`。
 5. 审核默认 `whitelist.yml`、`functions.yml` 和 Workspace。
@@ -88,6 +88,12 @@ v1.4.0 新增可选的 `openai_responses` Provider 协议；现有 `openai_chat_
 - 官方 Responses input message 没有 `name` 字段。启用任一玩家身份开关时，Responses 自动使用已转义的 `<player>` / `<message>` 正文信封；Chat 仍使用 `name` 字段。
 
 升级后先运行控制面、Tool/Function validate，再按“配置并验证两种 Provider 协议”矩阵分别演练纯文本、Tool 往返、多轮回放、reasoning、压缩、失败和重试；确认旧 Chat 模型仍为默认模型后再切换生产流量。
+
+## 从 v1.4.x 升级
+
+v1.5.0 不增加必填控制面字段，现有 Provider 配置可直接加载。`opencode`、`opencode-go` 与 `opencode-zen` Provider 会自动发送 Mineclaw `User-Agent` 和公共会话稳定的 `x-opencode-session`；不再需要为 OpenCode Go 单独硬编码这两个 header。
+
+需要其他 Provider 专有 header 时，可在对应 `api` 下新增可选 `extra_headers`。环境变量可嵌入任意位置；`${session_id}` 与 `${user_agent}` 在请求开始时展开，并在同一请求的 transport retry 间保持不变。自定义 UA 优先于 OpenCode 默认 UA，但 OpenCode session header 始终由运行时的权威会话 ID 覆盖。升级后至少验证一次无 `extra_headers` 的自动 OpenCode 请求，以及一次临时模板配置请求；确认都成功后再恢复生产配置。
 
 ## 管理命令与权限
 
@@ -217,16 +223,16 @@ Provider 返回上下文溢出时，Mineclaw 最多做一次压缩恢复和一�
 产物：
 
 ```text
-build/plugins/Mineclaw-1.4.0.jar
+build/plugins/Mineclaw-1.5.0.jar
 ```
 
 构建使用 Java toolchain 25、Gradle Wrapper 9.5.0 和 dependency locking。JAR 会合并运行时依赖，排除签名文件、module descriptor 和所有 `.env`，并加入项目 LICENSE、NOTICE 与第三方许可证资源。
 
-## v1.4.0 发布检查
+## v1.5.0 发布检查
 
 发布候选至少完成：
 
-1. 版本一致：Gradle、`paper-plugin.yml`、README、产物名均为 `1.4.0`。
+1. 版本一致：Gradle、`paper-plugin.yml`、README、产物名均为 `1.5.0`。
 2. `./gradlew --no-daemon clean test assemblePlugin` 全部通过。
 3. 连续两次 clean build 的 JAR SHA-256 一致。
 4. JAR 中不存在 `.env`、凭据、重复 entry 或签名残留，存在 LICENSE/NOTICE/第三方声明。
@@ -244,5 +250,7 @@ build/plugins/Mineclaw-1.4.0.jar
 v1.3.0 专项 smoke test 还应覆盖 `listen` 状态/on/off、非 OP 权限、隐式消息前缀、冷却/busy 与重启重置；Action Bar 首轮流式、后续原子替换、Tool 安全名称和最终公屏；完整 Tool transcript 档案、投影压缩不删档案，以及三次尝试后失败 Turn 不发布。
 
 v1.4.0 专项 smoke test 还应执行上文“双协议配置与验收”的完整矩阵：Chat Completions 与 Responses 各自覆盖纯文本、reasoning、local Tool、Provider Tool、多轮与压缩；确认 endpoint、请求容器、Function Schema、SSE 事件和回放 item 均未跨协议串线，Responses 始终为 `store: false`。
+
+v1.5.0 专项 smoke test 还应覆盖三个 OpenCode Provider ID 的自动 UA/session header、自定义 UA 优先级、大小写冲突、session 强制覆盖、`${session_id}` / `${user_agent}` / 环境变量模板、重试复用、Header 限额与凭据不落日志；生产 smoke 应分别执行自动 Header 和显式模板两条真实请求。
 
 仓库操作本身不需要提交或推送即可完成构建与审计；部署、tag、GitHub Release 和生产迁移应作为单独的显式变更步骤执行。

@@ -9,7 +9,7 @@ Workspace-driven AI agents for Paper and Folia servers.<br>
 面向 Paper 与 Folia 服务器、由工作区驱动的 AI Agent 体验。
 
 <p>
-  <a href="https://github.com/kites262/mineclaw/releases/tag/1.4.0"><img alt="Mineclaw 1.4.0" src="https://img.shields.io/badge/Mineclaw-1.4.0-4c8bf5"></a>
+  <a href="https://github.com/kites262/mineclaw/releases/tag/1.5.0"><img alt="Mineclaw 1.5.0" src="https://img.shields.io/badge/Mineclaw-1.5.0-4c8bf5"></a>
   <img alt="Minecraft 26.2" src="https://img.shields.io/badge/Minecraft-26.2-62b47a?logo=minecraft">
   <img alt="Paper and Folia" src="https://img.shields.io/badge/Paper%20%2F%20Folia-native-efc75e">
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-e76f00?logo=openjdk">
@@ -176,8 +176,8 @@ Mineclaw 位于玩家、世界、服务器知识和插件生态的交汇处。�
 > **Runtime target:** Paper 26.2 or Folia 26.2 with Java 25. Other server, Minecraft, and Java versions are outside the current compatibility promise.<br>
 > **运行目标：** Paper 26.2 或 Folia 26.2 + Java 25。其他服务端、Minecraft 或 Java 版本不在当前兼容承诺内。
 
-1. Download `Mineclaw-1.4.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) and place it in the server's `plugins/` directory.<br>
-   从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.4.0.jar`，放入服务端 `plugins/`。
+1. Download `Mineclaw-1.5.0.jar` from [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) and place it in the server's `plugins/` directory.<br>
+   从 [GitHub Releases](https://github.com/kites262/mineclaw/releases/latest) 下载 `Mineclaw-1.5.0.jar`，放入服务端 `plugins/`。
 
 2. Start the server once so Mineclaw can generate its default files, then stop it.<br>
    启动一次，让 Mineclaw 生成默认文件，然后停止服务端。
@@ -189,8 +189,8 @@ Mineclaw 位于玩家、世界、服务器知识和插件生态的交汇处。�
    MINECLAW_API_KEY=replace-with-your-secret
    ```
 
-4. Adjust `providers.yml` as needed. Mineclaw supports the coexisting `openai_chat_completions` and `openai_responses` API types; the bundled configuration uses Chat Completions. Both send credentials through the standard `Authorization: Bearer <key>` header.<br>
-   按需修改 `providers.yml`。Mineclaw 支持并存的 `openai_chat_completions` 与 `openai_responses` API type；发行配置默认使用 Chat Completions。两者都通过标准 `Authorization: Bearer <key>` 请求头发送凭据。
+4. Adjust `providers.yml` as needed. Mineclaw supports the coexisting `openai_chat_completions` and `openai_responses` API types; the bundled configuration uses Chat Completions. Both send credentials through the standard `Authorization: Bearer <key>` header, and provider-specific `api.extra_headers` may use environment and runtime templates.<br>
+   按需修改 `providers.yml`。Mineclaw 支持并存的 `openai_chat_completions` 与 `openai_responses` API type；发行配置默认使用 Chat Completions。两者都通过标准 `Authorization: Bearer <key>` 请求头发送凭据，Provider 专用的 `api.extra_headers` 可使用环境变量与运行时变量模板。
 
 5. Start the server and speak to Mineclaw in public chat.<br>
    启动服务端，在公屏与 Mineclaw 对话。
@@ -344,12 +344,12 @@ Public chat access uses `mineclaw.command.chat` and is enabled by default. See t
 ```bash
 git clone https://github.com/kites262/mineclaw.git
 cd mineclaw
-git checkout 1.4.0
+git checkout 1.5.0
 ./gradlew --no-daemon clean test assemblePlugin
 ```
 
-The deployable artifact is `build/plugins/Mineclaw-1.4.0.jar`. The JAR uses reproducible file ordering and timestamps and includes Apache-2.0, NOTICE, and third-party license resources.<br>
-可部署产物位于 `build/plugins/Mineclaw-1.4.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
+The deployable artifact is `build/plugins/Mineclaw-1.5.0.jar`. The JAR uses reproducible file ordering and timestamps and includes Apache-2.0, NOTICE, and third-party license resources.<br>
+可部署产物位于 `build/plugins/Mineclaw-1.5.0.jar`。JAR 使用可复现的文件顺序和时间戳设置，并包含 Apache-2.0、NOTICE 与第三方许可证资源。
 
 ## ✅ Compatibility
 

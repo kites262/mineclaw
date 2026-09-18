@@ -31,16 +31,20 @@ class PublicSessionTest {
     @Test
     void promptCacheKeyIsStableForASessionAndRotatesOnClear() {
         PublicSession session = new PublicSession();
-        String initial = session.snapshotState(24).promptCacheKey();
+        PublicSession.Snapshot initialSnapshot = session.snapshotState(24);
+        String initial = initialSnapshot.promptCacheKey();
 
         session.appendCompletedTurn(completed("Alice", "one", "answer"), 24);
         assertThat(session.snapshotState(24).promptCacheKey()).isEqualTo(initial);
+        assertThat(session.snapshotState(24).sessionId()).isEqualTo(initialSnapshot.sessionId());
+        assertThat(initialSnapshot.sessionId()).isEqualTo(initial.substring("mineclaw:".length()));
         assertThat(initial).matches("mineclaw:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
                 + "[0-9a-f]{4}-[0-9a-f]{12}");
 
         session.clear();
 
         assertThat(session.snapshotState(24).promptCacheKey()).isNotEqualTo(initial);
+        assertThat(session.snapshotState(24).sessionId()).isNotEqualTo(initialSnapshot.sessionId());
     }
 
     @Test

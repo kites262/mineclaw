@@ -169,5 +169,10 @@ public final class PublicSession {
         public List<ApiMessage> messages() {
             return flatten(turns);
         }
+
+        /** Stable provider-facing conversation identity without the prompt-cache namespace prefix. */
+        public String sessionId() {
+            return promptCacheKey.substring("mineclaw:".length());
+        }
     }
 }

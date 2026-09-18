@@ -104,11 +104,16 @@ public final class ProviderCatalog {
         }
     }
 
-    public record Api(ApiType type, URI baseUrl, String apiKey) {
+    public record Api(ApiType type, URI baseUrl, String apiKey, Map<String, String> extraHeaders) {
         public Api {
             Objects.requireNonNull(type, "type");
             Objects.requireNonNull(baseUrl, "baseUrl");
             apiKey = Objects.requireNonNull(apiKey, "apiKey");
+            extraHeaders = immutableMap(extraHeaders, "extraHeaders");
+        }
+
+        public Api(ApiType type, URI baseUrl, String apiKey) {
+            this(type, baseUrl, apiKey, Map.of());
         }
 
         public URI endpoint() {
@@ -117,7 +122,8 @@ public final class ProviderCatalog {
 
         @Override
         public String toString() {
-            return "Api[type=" + type.wireName() + ", baseUrl=protected, apiKey=protected]";
+            return "Api[type=" + type.wireName()
+                    + ", baseUrl=protected, apiKey=protected, extraHeaders=protected]";
         }
     }
 

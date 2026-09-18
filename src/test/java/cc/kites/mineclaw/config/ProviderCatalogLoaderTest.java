@@ -53,6 +53,66 @@ class ProviderCatalogLoaderTest {
     }
 
     @Test
+    void loadsExtraHeaderTemplatesAndExpandsEnvironmentVariablesWithoutLeakingValues() throws Exception {
+        String source = withExtraHeaders(base("""
+                  mimo/model-a:
+                    limits: {context_window_tokens: 4096, max_output_tokens: 512}
+                """, "mimo/model-a"), """
+                User-Agent: ${user_agent}
+                x-opencode-session: ${session_id}
+                X-Tenant: tenant-${TENANT}
+                """);
+
+        ProviderCatalog.Api api = loader.parse(source, Map.of("KEY", "secret", "TENANT", "alpha"))
+                .providers().get("mimo").api();
+
+        assertThat(api.extraHeaders()).containsExactly(
+                Map.entry("User-Agent", "${user_agent}"),
+                Map.entry("x-opencode-session", "${session_id}"),
+                Map.entry("X-Tenant", "tenant-alpha"));
+        assertThatThrownBy(() -> api.extraHeaders().put("X-New", "value"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(api.toString()).doesNotContain("secret", "tenant-alpha", "X-Tenant");
+    }
+
+    @Test
+    void rejectsUnsafeDuplicateManagedOrUnresolvedExtraHeaders() {
+        for (Map.Entry<String, String> invalid : Map.of(
+                "invalid name", "Bad Header: value\n",
+                "duplicates", "X-Test: one\nx-test: two\n",
+                "managed", "Authorization: replacement\n",
+                "control", "X-Test: \"line\\nfeed\"\n",
+                "missing variable", "X-Test: ${MISSING}\n"
+        ).entrySet()) {
+            String source = withExtraHeaders(base("""
+                      mimo/model-a:
+                        limits: {context_window_tokens: 4096, max_output_tokens: 512}
+                    """, "mimo/model-a"), invalid.getValue());
+
+            assertThatThrownBy(() -> loader.parse(source, Map.of("KEY", "secret")))
+                    .as(invalid.getKey())
+                    .isInstanceOf(ConfigException.class);
+        }
+
+        String nested = withExtraHeaders(base("""
+                  mimo/model-a:
+                    limits: {context_window_tokens: 4096, max_output_tokens: 512}
+                """, "mimo/model-a"), "X-Test: ${TENANT}\n");
+        assertThatThrownBy(() -> loader.parse(nested,
+                Map.of("KEY", "secret", "TENANT", "${session_id}")))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("nested variable reference");
+
+        String expandsPastLimit = withExtraHeaders(base("""
+                  mimo/model-a:
+                    limits: {context_window_tokens: 4096, max_output_tokens: 512}
+                """, "mimo/model-a"), "X-Test: " + "x".repeat(7_940) + "${session_id}\n");
+        assertThatThrownBy(() -> loader.parse(expandsPastLimit, Map.of("KEY", "secret")))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("header value limit");
+    }
+
+    @Test
     void sharesOneProviderAcrossModelsAndSplitsOnlyTheFirstSlash() throws Exception {
         ProviderCatalog catalog = loader.parse(base("""
                   mimo/model-a:
@@ -279,6 +339,11 @@ class ProviderCatalogLoaderTest {
                   mimo/model:
                     limits: {context_window_tokens: 4096, max_output_tokens: 512}
                 """.formatted(tools.indent(6));
+    }
+
+    private static String withExtraHeaders(String source, String headers) {
+        return source.replace("      api_key: ${KEY}\n",
+                "      api_key: ${KEY}\n      extra_headers:\n" + headers.stripIndent().indent(8));
     }
 
     private static String resource(String name) throws Exception {

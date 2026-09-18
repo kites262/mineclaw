@@ -1,6 +1,6 @@
 # 安全模型
 
-Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文说明 v1.4.0 的信任来源、隔离范围和不能保证的事项。
+Mineclaw 把权限放在运行时边界，而不是寄希望于 Prompt。本文说明 v1.5.0 的信任来源、隔离范围和不能保证的事项。
 
 ## 信任矩阵
 
@@ -118,12 +118,15 @@ Mineclaw 区分“请求被接受”“命令已分发”和“游戏效果已�
 
 四个控制面文件通过固定路径读取，拒绝符号链接和不安全文件类型。YAML 解析拒绝重复 key、alias、merge、自定义 tag、未知字段和超限结构。
 
-`.env` 不进入发行 JAR，也不位于 Workspace。两种 Provider 协议都用标准 Bearer header 发送密钥；日志和错误展示不得包含凭据或完整敏感响应。建议：
+`.env` 不进入发行 JAR，也不位于 Workspace。两种 Provider 协议都用标准 Bearer header 发送 `api_key`。Provider 可另外声明 `api.extra_headers`；其环境变量在控制面加载时解析，`${session_id}` 与 `${user_agent}` 在请求开始时解析，值不会进入配置字符串展示或请求诊断日志。`Authorization`、`Host`、`Content-Length` 等 transport 管理的 header 不允许由配置覆盖，名称、大小、重复项和控制字符均在发布控制面前校验。
+
+`opencode`、`opencode-go` 与 `opencode-zen` 自动发送 Mineclaw 自身 UA 和当前公共会话稳定的 `x-opencode-session`。自定义 UA 可覆盖默认值，但配置中的 OpenCode session header 会被权威会话 ID 覆盖；同一 Turn、Tool 往返、压缩与 transport 重试复用该 ID，clear 或进程重启后轮换。Header 模板仍属于敏感配置：如果放入密钥，其保密要求与 `api_key` 相同。日志和错误展示不得包含凭据或完整敏感响应。建议：
 
 - 优先用进程环境，其次用权限为 `0600` 的 `.env`；
 - API key 只授予必要 Provider 能力并定期轮换；
 - 限制谁能读取插件数据目录和服务器日志；
 - 不把 key 写入 `providers.yml`、Skill、AGENTS、命令或玩家文案；
+- 不在 header 模板中拼接玩家输入，并只向可信 Provider 发送 session/租户标识；
 - 发布前扫描源码、资源、构建产物和 Git 历史。
 
 ## 原子快照与并发

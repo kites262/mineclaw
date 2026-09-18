@@ -1,6 +1,6 @@
 # 配置参考
 
-本文对应 Mineclaw 1.4.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
+本文对应 Mineclaw 1.5.0。v1 配置是全新的严格 Schema，不接受 v0.x 字段，也没有兼容转换层。
 
 ## 文件与生效时机
 
@@ -128,11 +128,32 @@ models:
 
 - `api.type` 支持并存的 `openai_chat_completions` 与 `openai_responses`；每个 Provider 独立选择，多个 Provider 可以指向同一 API 根和凭据。
 - `base_url` 是 HTTP(S) API 根地址，不能包含具体生成 endpoint。Mineclaw 分别追加 `/chat/completions` 或 `/responses`；以任一路径结尾的配置都会被拒绝。
-- 请求凭据统一使用标准 `Authorization: Bearer <api_key>`，不使用某一 Provider 的专有 header。
+- 请求凭据统一使用标准 `Authorization: Bearer <api_key>`；Provider 的其他专有 header 可通过 `api.extra_headers` 配置。
 - `api_key` 可以是字面量，但推荐使用完整的 `${ENV_NAME}` 引用。只有整个值完全匹配这个形式时才会解析环境变量。
 - 解析顺序是进程环境优先，再读取同目录 `.env`。缺失或空值使整个控制面候选无效。
 - `.env` 支持注释、`export`、单双引号，不做变量插值；文件必须是非符号链接的普通 UTF-8 文件，最大 64 KiB。
 - 首次启动只创建 `MINECLAW_API_KEY=` 空占位，并在 POSIX 文件系统尽力设置 `0600`。
+
+`api.extra_headers` 是可选的 header 名到字符串模板的 mapping。模板可在任意位置引用进程环境或同目录 `.env` 中的 `${ENV_NAME}`；环境仍按“进程优先、`.env` 其次”解析。另有两个在每次请求开始时展开的运行时变量：`${session_id}` 是当前公共会话稳定的 UUID，在进程存续期间只有显式清空会话才轮换，插件重启会建立新会话；`${user_agent}` 是 Mineclaw 自身的 `mineclaw/<version>` 标识。一次请求的所有重试复用同一展开结果。例如：
+
+```yaml
+providers:
+  custom:
+    api:
+      type: openai_chat_completions
+      base_url: https://api.example.com/v1
+      api_key: ${CUSTOM_API_KEY}
+      extra_headers:
+        User-Agent: ${user_agent}
+        x-vendor-session: ${session_id}
+        X-Tenant: tenant-${TENANT_ID}
+    transport: {timeout_ms: 60000, retry: {max_retries: 2, backoff_ms: 500}}
+    tools: []
+```
+
+Header 名大小写不敏感且不能重复。`Accept`、`Authorization`、`Content-Type`、`Host`、`Content-Length` 等由 HTTP transport 管理的 header 不能覆盖；header 值不能是空白、包含控制字符或引用不存在的变量。配置值可能包含密钥，因此不会进入 API 配置的字符串展示或请求诊断日志。
+
+当模型引用的 provider ID 精确为 `opencode`、`opencode-go` 或 `opencode-zen` 时，Mineclaw 还会自动执行 OpenCode 客户端身份规则：若配置未提供 `User-Agent`（大小写不敏感），补入 Mineclaw UA；`x-opencode-session` 始终被当前公共会话的稳定 ID 覆盖。也就是说，自定义 UA 优先，而 OpenCode session identity 由运行时掌控；手动写 `x-opencode-session: ${session_id}` 会得到相同值。其他 provider 不触发自动规则，可用 `extra_headers` 自行构造相应 header。
 
 两个协议可以在同一目录中并存，例如：
 

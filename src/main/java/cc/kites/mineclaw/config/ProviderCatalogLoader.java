@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -26,6 +27,16 @@ public final class ProviderCatalogLoader {
     public static final String FILE_NAME = "providers.yml";
     private static final Pattern ID = Pattern.compile("[a-z][a-z0-9_.-]{0,63}");
     private static final Pattern ENV = Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_]*)}");
+    private static final Pattern HEADER_VARIABLE = Pattern.compile("\\$\\{([^{}]*)}");
+    private static final Pattern ENV_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static final Pattern HEADER_NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}");
+    private static final Set<String> RUNTIME_HEADER_VARIABLES = Set.of("session_id", "user_agent");
+    private static final Set<String> MANAGED_HEADERS = Set.of("accept", "authorization", "connection",
+            "content-length", "content-type", "expect", "host", "proxy-authorization",
+            "transfer-encoding", "upgrade");
+    private static final int MAX_EXTRA_HEADERS = 32;
+    private static final int MAX_HEADER_VALUE_CODE_POINTS = 8_192;
+    private static final int MAX_HEADER_VALUES_CODE_POINTS = 32_768;
     private static final Set<String> RESERVED = Set.of("model", "messages", "tools", "tool_choice",
             "stream", "stream_options", "max_tokens", "max_completion_tokens", "prompt_cache_key",
             "input", "instructions", "max_output_tokens", "store", "background", "previous_response_id",
@@ -92,7 +103,12 @@ public final class ProviderCatalogLoader {
         String path = "$.providers." + id;
         exact(entry, Set.of("api", "transport", "tools"), path, true);
         JsonObject api = object(entry.get("api"), path + ".api", true);
-        exact(api, Set.of("type", "base_url", "api_key"), path + ".api", true);
+        exact(api, Set.of("type", "base_url", "api_key", "extra_headers"), path + ".api", false);
+        for (String required : Set.of("type", "base_url", "api_key")) {
+            if (!api.has(required)) {
+                throw invalid(path + ".api." + required + " is required");
+            }
+        }
         String typeName = string(api.get("type"), path + ".api.type");
         ProviderCatalog.ApiType type = ProviderCatalog.ApiType.fromWireName(typeName)
                 .orElseThrow(() -> invalid(path + ".api.type is unsupported"));
@@ -100,6 +116,10 @@ public final class ProviderCatalogLoader {
                 path + ".api.base_url");
         String apiKey = credential(string(api.get("api_key"), path + ".api.api_key"),
                 path + ".api.api_key", dotenv);
+        Map<String, String> extraHeaders = api.has("extra_headers")
+                ? extraHeaders(object(api.get("extra_headers"), path + ".api.extra_headers", true),
+                path + ".api.extra_headers", dotenv)
+                : Map.of();
 
         JsonObject transport = object(entry.get("transport"), path + ".transport", true);
         exact(transport, Set.of("timeout_ms", "retry"), path + ".transport", true);
@@ -124,9 +144,106 @@ public final class ProviderCatalogLoader {
             JsonObject payload = object(tool.get("payload"), toolPath + ".payload", false);
             parsedTools.add(new ProviderCatalog.ProviderTool(toolId, payload));
         }
-        return new ProviderCatalog.Provider(id, new ProviderCatalog.Api(type, baseUrl, apiKey),
+        return new ProviderCatalog.Provider(id, new ProviderCatalog.Api(type, baseUrl, apiKey, extraHeaders),
                 new ProviderCatalog.Transport(Duration.ofMillis(timeout), retries, Duration.ofMillis(backoff)),
                 parsedTools);
+    }
+
+    private Map<String, String> extraHeaders(JsonObject configured, String path,
+                                              MineclawConfig.SecretEnvironment dotenv)
+            throws ConfigException {
+        if (configured.size() > MAX_EXTRA_HEADERS) {
+            throw invalid(path + " exceeds " + MAX_EXTRA_HEADERS + " entries");
+        }
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        HashSet<String> normalizedNames = new HashSet<>();
+        int totalValueCodePoints = 0;
+        for (Map.Entry<String, JsonElement> entry : configured.entrySet()) {
+            String name = entry.getKey();
+            String headerPath = path + '.' + name;
+            String normalized = name.toLowerCase(Locale.ROOT);
+            if (!HEADER_NAME.matcher(name).matches()) {
+                throw invalid(headerPath + " has an invalid HTTP header name");
+            }
+            if (!normalizedNames.add(normalized)) {
+                throw invalid(headerPath + " duplicates an HTTP header name ignoring case");
+            }
+            if (MANAGED_HEADERS.contains(normalized)) {
+                throw invalid(headerPath + " is managed by Mineclaw and cannot be overridden");
+            }
+            String value = expandHeaderVariables(string(entry.getValue(), headerPath), headerPath, dotenv);
+            int valueCodePoints = projectedHeaderValueCodePoints(value);
+            totalValueCodePoints += valueCodePoints;
+            if (value.isBlank() || valueCodePoints > MAX_HEADER_VALUE_CODE_POINTS
+                    || totalValueCodePoints > MAX_HEADER_VALUES_CODE_POINTS) {
+                throw invalid(headerPath + " is blank or exceeds the configured header value limit");
+            }
+            if (value.codePoints().anyMatch(Character::isISOControl)) {
+                throw invalid(headerPath + " contains an invalid HTTP header character");
+            }
+            result.put(name, value);
+        }
+        return result;
+    }
+
+    private static int projectedHeaderValueCodePoints(String template) {
+        String maximumRuntimeValue = "x".repeat(256);
+        String projected = template.replace("${session_id}", maximumRuntimeValue)
+                .replace("${user_agent}", maximumRuntimeValue);
+        return projected.codePointCount(0, projected.length());
+    }
+
+    private String expandHeaderVariables(String configured, String path,
+                                         MineclawConfig.SecretEnvironment dotenv)
+            throws ConfigException {
+        Matcher matcher = HEADER_VARIABLE.matcher(configured);
+        StringBuilder result = new StringBuilder();
+        int end = 0;
+        while (matcher.find()) {
+            String literal = configured.substring(end, matcher.start());
+            if (literal.contains("${")) {
+                throw invalid(path + " contains an invalid variable reference");
+            }
+            result.append(literal);
+            String name = matcher.group(1);
+            if (!ENV_NAME.matcher(name).matches()) {
+                throw invalid(path + " contains an invalid variable reference");
+            }
+            if (RUNTIME_HEADER_VARIABLES.contains(name)) {
+                result.append(matcher.group());
+            } else {
+                String environmentValue = environmentValue(name, path, dotenv);
+                if (environmentValue.contains("${")) {
+                    throw invalid(path + " environment variable " + name
+                            + " contains a nested variable reference");
+                }
+                result.append(environmentValue);
+            }
+            end = matcher.end();
+        }
+        String tail = configured.substring(end);
+        if (tail.contains("${")) {
+            throw invalid(path + " contains an invalid variable reference");
+        }
+        result.append(tail);
+        return result.toString();
+    }
+
+    private String environmentValue(String name, String path, MineclawConfig.SecretEnvironment dotenv)
+            throws ConfigException {
+        String value;
+        try {
+            value = processEnvironment.apply(name);
+        } catch (RuntimeException exception) {
+            throw invalid(path + " could not access the process environment");
+        }
+        if (value == null) {
+            value = dotenv.get(name);
+        }
+        if (value == null || value.isBlank()) {
+            throw invalid(path + " references an absent or empty environment variable " + name);
+        }
+        return value.trim();
     }
 
     private static ProviderCatalog.Model model(Reference reference, JsonObject entry,
@@ -214,19 +331,7 @@ public final class ProviderCatalogLoader {
             return configured;
         }
         String name = matcher.group(1);
-        String value;
-        try {
-            value = processEnvironment.apply(name);
-        } catch (RuntimeException exception) {
-            throw invalid(path + " could not access the process environment");
-        }
-        if (value == null) {
-            value = dotenv.get(name);
-        }
-        if (value == null || value.isBlank()) {
-            throw invalid(path + " references an absent or empty environment variable");
-        }
-        return value.trim();
+        return environmentValue(name, path, dotenv);
     }
 
     private static Reference reference(String value, String path) throws ConfigException {

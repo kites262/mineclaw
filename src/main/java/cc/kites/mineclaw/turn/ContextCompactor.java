@@ -45,11 +45,13 @@ final class ContextCompactor {
     CompletableFuture<Outcome> compact(ProviderCatalog.Model model, ProviderCatalog.Provider provider,
                                        String previousSummary, List<List<ApiMessage>> turns,
                                        int maxOutputTokens, Optional<String> promptCacheKey,
+                                       String sessionId,
                                        boolean requestDiagnostics, boolean includeMessageNames,
                                        boolean includePlayerContentPrefix) {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(provider, "provider");
         Objects.requireNonNull(promptCacheKey, "promptCacheKey");
+        Objects.requireNonNull(sessionId, "sessionId");
         if (turns.isEmpty()) {
             return CompletableFuture.failedFuture(
                     new IllegalArgumentException("compaction requires at least one complete Turn"));
@@ -72,8 +74,19 @@ final class ContextCompactor {
                 provider.api().type() == ProviderCatalog.ApiType.OPENAI_RESPONSES
                         ? ChatCompletionRequest.Protocol.RESPONSES
                         : ChatCompletionRequest.Protocol.CHAT_COMPLETIONS);
-        return client.complete(request, provider.api().apiKey(), IGNORE_STREAM)
+        return client.complete(request, provider.api().apiKey(), provider.api().extraHeaders(),
+                        sessionId, IGNORE_STREAM)
                 .thenApply(result -> outcome(result, rawEstimate));
+    }
+
+    CompletableFuture<Outcome> compact(ProviderCatalog.Model model, ProviderCatalog.Provider provider,
+                                       String previousSummary, List<List<ApiMessage>> turns,
+                                       int maxOutputTokens, Optional<String> promptCacheKey,
+                                       boolean requestDiagnostics, boolean includeMessageNames,
+                                       boolean includePlayerContentPrefix) {
+        return compact(model, provider, previousSummary, turns, maxOutputTokens, promptCacheKey,
+                fallbackSessionId(promptCacheKey), requestDiagnostics, includeMessageNames,
+                includePlayerContentPrefix);
     }
 
     CompletableFuture<Outcome> compact(ProviderCatalog.Model model, ProviderCatalog.Provider provider,
@@ -94,6 +107,11 @@ final class ContextCompactor {
                                        String previousSummary, List<List<ApiMessage>> turns,
                                        int maxOutputTokens) {
         return compact(model, provider, previousSummary, turns, maxOutputTokens, Optional.empty());
+    }
+
+    private static String fallbackSessionId(Optional<String> promptCacheKey) {
+        return promptCacheKey.map(value -> value.substring("mineclaw:".length()))
+                .orElseGet(() -> java.util.UUID.randomUUID().toString());
     }
 
     static String withSummary(String baseSystem, String summary) {

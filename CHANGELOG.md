@@ -2,6 +2,14 @@
 
 Mineclaw 使用语义化版本。v1.0.0 是重新设计的第一个稳定大版本，与全部 v0.x 配置不兼容。
 
+## 1.5.0 — 2026-09-18
+
+### Provider Header
+
+- `opencode`、`opencode-go` 与 `opencode-zen` 自动发送 Mineclaw 自身 `User-Agent` 和公共会话稳定的 `x-opencode-session`；自定义 UA 优先，OpenCode session identity 由运行时覆盖，并在 Turn、压缩及重试间复用。
+- `providers.yml` 的 `api.extra_headers` 支持任意位置的环境变量引用，以及请求时展开的 `${session_id}`、`${user_agent}`；严格拒绝大小写重复、transport 管理、控制字符、超限或变量缺失的 header。
+- Provider header 模板与展开值不进入配置字符串展示或请求诊断日志。
+
 ## 1.4.0 — 2026-08-27
 
 ### Provider 协议

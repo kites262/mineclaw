@@ -15,8 +15,15 @@ import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -34,6 +41,15 @@ public final class ChatCompletionsClient {
     private static final int MAX_ERROR_BODY_BYTES = 16 * 1024;
     private static final int DEBUG_MESSAGE_CODE_POINTS = 100;
     private static final Duration MAX_RETRY_BACKOFF = Duration.ofSeconds(60);
+    private static final String SESSION_HEADER = "x-opencode-session";
+    private static final Set<String> OPENCODE_PROVIDERS = Set.of(
+            "opencode", "opencode-go", "opencode-zen");
+    private static final Set<String> MANAGED_HEADERS = Set.of("accept", "authorization", "connection",
+            "content-length", "content-type", "expect", "host", "proxy-authorization",
+            "transfer-encoding", "upgrade");
+    private static final java.util.regex.Pattern HEADER_NAME = java.util.regex.Pattern.compile(
+            "[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}");
+    private static final String USER_AGENT = mineclawUserAgent();
 
     private final HttpClient httpClient;
     private final Consumer<String> debugLogger;
@@ -67,26 +83,45 @@ public final class ChatCompletionsClient {
             StreamObserver observer
     ) {
         Objects.requireNonNull(request, "request");
+        return complete(request, apiKey, Map.of(), defaultSessionId(request), observer);
+    }
+
+    /**
+     * Executes a request with provider-scoped header templates. Runtime variables are expanded once so every retry
+     * uses the same values. OpenCode providers always receive the authoritative conversation session header while
+     * retaining an explicitly configured User-Agent.
+     */
+    public CompletableFuture<ChatCompletionResult> complete(
+            ChatCompletionRequest request,
+            String apiKey,
+            Map<String, String> extraHeaders,
+            String sessionId,
+            StreamObserver observer
+    ) {
+        Objects.requireNonNull(request, "request");
         validateApiKey(apiKey);
+        Map<String, String> headers = requestHeaders(request, extraHeaders, sessionId);
         Objects.requireNonNull(observer, "observer");
         String body = requestBody(request);
         String debugBody = request.requestDiagnostics() ? debugRequestBody(body) : "";
-        return new RequestOperation(request, apiKey, observer, body, debugBody).start();
+        return new RequestOperation(request, apiKey, headers, observer, body, debugBody).start();
     }
 
     private CompletableFuture<ChatCompletionResult> sendAttempt(
             ChatCompletionRequest request,
             String apiKey,
+            Map<String, String> headers,
             Consumer<String> deltaConsumer,
             String body
     ) {
-        HttpRequest httpRequest = HttpRequest.newBuilder(request.endpoint())
+        HttpRequest.Builder builder = HttpRequest.newBuilder(request.endpoint())
                 .timeout(request.timeout())
                 .header("Accept", "text/event-stream, application/json")
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+        headers.forEach(builder::header);
+        HttpRequest httpRequest = builder.build();
 
         AtomicReference<Flow.Subscription> subscription = new AtomicReference<>();
         CompletableFuture<HttpResponse<Flow.Publisher<List<ByteBuffer>>>> responseFuture = httpClient.sendAsync(
@@ -511,6 +546,82 @@ public final class ChatCompletionsClient {
                 CompletableFuture.delayedExecutor(duration.toNanos(), TimeUnit.NANOSECONDS));
     }
 
+    private static Map<String, String> requestHeaders(ChatCompletionRequest request,
+                                                       Map<String, String> configured,
+                                                       String sessionId) {
+        Objects.requireNonNull(configured, "extraHeaders");
+        validateSessionId(sessionId);
+        if (configured.size() > 32) {
+            throw new IllegalArgumentException("extraHeaders exceeds the configured entry limit");
+        }
+        LinkedHashMap<String, String> headers = new LinkedHashMap<>();
+        HashSet<String> normalizedNames = new HashSet<>();
+        int[] totalValueCodePoints = {0};
+        configured.forEach((name, template) -> {
+            Objects.requireNonNull(name, "extraHeaders name");
+            Objects.requireNonNull(template, "extraHeaders value");
+            String normalized = name.toLowerCase(Locale.ROOT);
+            if (!HEADER_NAME.matcher(name).matches() || MANAGED_HEADERS.contains(normalized)) {
+                throw new IllegalArgumentException("extraHeaders contains an invalid or managed header name");
+            }
+            if (!normalizedNames.add(normalized)) {
+                throw new IllegalArgumentException("extraHeaders contains a case-insensitive duplicate");
+            }
+            String value = template.replace("${session_id}", sessionId)
+                    .replace("${user_agent}", USER_AGENT);
+            int valueCodePoints = value.codePointCount(0, value.length());
+            totalValueCodePoints[0] += valueCodePoints;
+            if (value.contains("${") || value.isBlank()
+                    || valueCodePoints > 8_192 || totalValueCodePoints[0] > 32_768
+                    || value.codePoints().anyMatch(Character::isISOControl)) {
+                throw new IllegalArgumentException("extraHeaders contains an invalid header value");
+            }
+            headers.put(name, value);
+        });
+
+        if (isOpenCodeProvider(request.modelReference())) {
+            putIfAbsentIgnoringCase(headers, "User-Agent", USER_AGENT);
+            putReplacingIgnoringCase(headers, SESSION_HEADER, sessionId);
+        }
+        return Collections.unmodifiableMap(headers);
+    }
+
+    private static boolean isOpenCodeProvider(String modelReference) {
+        int slash = modelReference.indexOf('/');
+        return slash > 0 && OPENCODE_PROVIDERS.contains(modelReference.substring(0, slash));
+    }
+
+    private static void putIfAbsentIgnoringCase(Map<String, String> headers, String name, String value) {
+        boolean present = headers.keySet().stream().anyMatch(name::equalsIgnoreCase);
+        if (!present) {
+            headers.put(name, value);
+        }
+    }
+
+    private static void putReplacingIgnoringCase(Map<String, String> headers, String name, String value) {
+        headers.keySet().removeIf(name::equalsIgnoreCase);
+        headers.put(name, value);
+    }
+
+    private static String defaultSessionId(ChatCompletionRequest request) {
+        return request.promptCacheKey()
+                .map(value -> value.startsWith("mineclaw:") ? value.substring("mineclaw:".length()) : value)
+                .orElseGet(() -> UUID.randomUUID().toString());
+    }
+
+    private static void validateSessionId(String sessionId) {
+        Objects.requireNonNull(sessionId, "sessionId");
+        if (sessionId.isBlank() || sessionId.codePointCount(0, sessionId.length()) > 256
+                || sessionId.codePoints().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException("sessionId is invalid");
+        }
+    }
+
+    private static String mineclawUserAgent() {
+        String version = ChatCompletionsClient.class.getPackage().getImplementationVersion();
+        return "mineclaw/" + (version == null || version.isBlank() ? "dev" : version);
+    }
+
     private static void validateApiKey(String apiKey) {
         Objects.requireNonNull(apiKey, "apiKey");
         if (apiKey.isBlank()) {
@@ -525,16 +636,18 @@ public final class ChatCompletionsClient {
     private final class RequestOperation {
         private final ChatCompletionRequest request;
         private final String apiKey;
+        private final Map<String, String> headers;
         private final StreamObserver observer;
         private final String body;
         private final String debugBody;
         private final CompletableFuture<ChatCompletionResult> result = new CompletableFuture<>();
         private final AtomicReference<CompletableFuture<?>> current = new AtomicReference<>();
 
-        private RequestOperation(ChatCompletionRequest request, String apiKey,
+        private RequestOperation(ChatCompletionRequest request, String apiKey, Map<String, String> headers,
                                  StreamObserver observer, String body, String debugBody) {
             this.request = request;
             this.apiKey = apiKey;
+            this.headers = headers;
             this.observer = observer;
             this.body = body;
             this.debugBody = debugBody;
@@ -561,7 +674,7 @@ public final class ChatCompletionsClient {
             CompletableFuture<ChatCompletionResult> transport;
             try {
                 logDebugRequest(attemptNumber + 1);
-                transport = sendAttempt(request, apiKey, delta -> {
+                transport = sendAttempt(request, apiKey, headers, delta -> {
                         emittedDelta.set(true);
                         observer.onDelta(delta);
                 }, body);

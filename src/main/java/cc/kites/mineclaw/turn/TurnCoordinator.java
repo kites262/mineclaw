@@ -140,7 +140,7 @@ public final class TurnCoordinator {
         PublicSession.Snapshot sessionState = session.snapshotState(config.context().maxMessages());
         ActiveTurn turn = new ActiveTurn(turnIds.incrementAndGet(), sessionEpoch.get(), player,
                 playerId, playerName, question, control, config, model, provider, new ArrayList<>(),
-                promptCacheKey(model, sessionState),
+                promptCacheKey(model, sessionState), sessionState.sessionId(),
                 new ThrottledActionBar(player, channel, tasks,
                 config.chat().actionbarMaxChars()));
         turn.sessionRevision = sessionState.revision();
@@ -298,6 +298,7 @@ public final class TurnCoordinator {
         CompletableFuture<ChatCompletionResult> response;
         try {
             response = chatClient.complete(prepared.request(), turn.provider.api().apiKey(),
+                    turn.provider.api().extraHeaders(), turn.sessionId,
                     new ChatCompletionsClient.StreamObserver() {
                 @Override
                 public void onDelta(String delta) {
@@ -529,7 +530,8 @@ public final class TurnCoordinator {
         long started = System.nanoTime();
         CompletableFuture<ContextCompactor.Outcome> request = compactor.compact(
                 turn.model, turn.provider, turn.summary, compactedTurns, outputBudget,
-                turn.promptCacheKey, turn.config.logging().requestDiagnosticsEnabled(),
+                turn.promptCacheKey, turn.sessionId,
+                turn.config.logging().requestDiagnosticsEnabled(),
                 identity.includePlayerNameField(),
                 identity.includePlayerContentPrefix());
         turn.inFlight.set(request);
@@ -817,7 +819,7 @@ public final class TurnCoordinator {
         long started = System.nanoTime();
         CompletableFuture<ContextCompactor.Outcome> request = compactor.compact(
                 model, snapshot.provider(), snapshot.source().summary(), compactedTurns, outputBudget,
-                promptCacheKey(model, snapshot.source()),
+                promptCacheKey(model, snapshot.source()), snapshot.source().sessionId(),
                 snapshot.config().logging().requestDiagnosticsEnabled(),
                 identity.includePlayerNameField(),
                 identity.includePlayerContentPrefix());
@@ -1185,6 +1187,7 @@ public final class TurnCoordinator {
         private final ProviderCatalog.Provider provider;
         private final List<ApiMessage> context;
         private final Optional<String> promptCacheKey;
+        private final String sessionId;
         private final ThrottledActionBar actionBar;
         private final AtomicReference<CompletableFuture<?>> inFlight = new AtomicReference<>();
         private final AtomicReference<ToolExecution> toolExecution = new AtomicReference<>();
@@ -1200,7 +1203,7 @@ public final class TurnCoordinator {
                            String question,
                            ControlPlaneSnapshot control, MineclawConfig config,
                            ProviderCatalog.Model model, ProviderCatalog.Provider provider,
-                           List<ApiMessage> context, Optional<String> promptCacheKey,
+                           List<ApiMessage> context, Optional<String> promptCacheKey, String sessionId,
                            ThrottledActionBar actionBar) {
             this.id = id;
             this.sessionEpoch = sessionEpoch;
@@ -1214,6 +1217,7 @@ public final class TurnCoordinator {
             this.provider = provider;
             this.context = context;
             this.promptCacheKey = Objects.requireNonNull(promptCacheKey, "promptCacheKey");
+            this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
             this.actionBar = actionBar;
         }
     }
